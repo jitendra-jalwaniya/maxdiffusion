@@ -40,18 +40,22 @@ from maxdiffusion.utils import export_to_video
 jax.config.update("jax_use_shardy_partitioner", True)
 
 
-def load_vbench_prompts(json_path: str, start_idx: int = 0, count: int = 50) -> list[str]:
-  """Loads prompts from VBench_full_info.json, searching multiple candidate paths or downloading if needed."""
+def load_vbench_prompts(json_path: str, start_idx: int = 0, count: int | None = None) -> list[str]:
+  """Loads prompts from a VBench json, searching multiple candidate paths or downloading if needed."""
+  filename = os.path.basename(json_path)
   candidates = [
       os.path.expanduser(json_path),
       os.path.abspath(json_path),
       os.path.join(os.path.expanduser("~"), json_path),
-      os.path.join(os.path.expanduser("~"), "VBench", "vbench", "VBench_full_info.json"),
-      os.path.join(os.path.expanduser("~"), "Documents", "VBench", "vbench", "VBench_full_info.json"),
-      os.path.join(os.getcwd(), "..", "VBench", "vbench", "VBench_full_info.json"),
-      os.path.join(os.getcwd(), "VBench", "vbench", "VBench_full_info.json"),
-      os.path.join(os.getcwd(), "VBench_full_info.json"),
-      os.path.expanduser("~/.cache/vbench/VBench_full_info.json"),
+      os.path.join(os.path.expanduser("~"), "Documents", json_path),
+      os.path.join(os.path.expanduser("~"), "Documents", "maxdiffusion", json_path),
+      os.path.join(os.path.expanduser("~"), "Documents", "VBench", "vbench", filename),
+      os.path.join(os.path.expanduser("~"), "VBench", "vbench", filename),
+      os.path.join(os.getcwd(), json_path),
+      os.path.join(os.getcwd(), filename),
+      os.path.join(os.getcwd(), "..", "VBench", "vbench", filename),
+      os.path.join(os.getcwd(), "VBench", "vbench", filename),
+      os.path.expanduser(f"~/.cache/vbench/{filename}"),
   ]
 
   resolved_path = None
@@ -63,9 +67,9 @@ def load_vbench_prompts(json_path: str, start_idx: int = 0, count: int = 50) -> 
   if resolved_path is None:
     cache_dir = os.path.expanduser("~/.cache/vbench")
     os.makedirs(cache_dir, exist_ok=True)
-    resolved_path = os.path.join(cache_dir, "VBench_full_info.json")
+    resolved_path = os.path.join(cache_dir, filename)
     max_logging.log(f"VBench json not found locally. Downloading to {resolved_path}...")
-    url = "https://raw.githubusercontent.com/Vchitect/VBench/master/vbench/VBench_full_info.json"
+    url = f"https://raw.githubusercontent.com/Vchitect/VBench/master/vbench/{filename}"
     try:
       urllib.request.urlretrieve(url, resolved_path)
       max_logging.log(f"Downloaded VBench json successfully to {resolved_path}")
@@ -78,7 +82,10 @@ def load_vbench_prompts(json_path: str, start_idx: int = 0, count: int = 50) -> 
   with open(resolved_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-  sliced_data = data[start_idx : start_idx + count]
+  if count is not None:
+    sliced_data = data[start_idx : start_idx + count]
+  else:
+    sliced_data = data[start_idx:]
   prompts = [item["prompt_en"] for item in sliced_data]
   return prompts
 
@@ -182,7 +189,7 @@ def run_vbench_batch(
     config,
     vbench_json: str,
     start_idx: int = 0,
-    num_prompts: int = 50,
+    num_prompts: int | None = None,
     commit_hash: str | None = None,
 ):
   """Executes batch generation over VBench prompts."""
@@ -281,8 +288,8 @@ def main(argv: Sequence[str]) -> None:
   commit_hash = max_utils.get_git_commit_hash()
 
   # Extract script-specific arguments before passing argv to pyconfig
-  vbench_json = "VBench/vbench/VBench_full_info.json"
-  vbench_num_prompts = 50
+  vbench_json = "VBench_full_info_sub110.json"
+  vbench_num_prompts = None
   vbench_start_idx = 0
 
   filtered_argv = [argv[0], argv[1]] if len(argv) >= 2 else list(argv)
