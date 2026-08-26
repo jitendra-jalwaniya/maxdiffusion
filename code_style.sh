@@ -17,7 +17,7 @@
 
 set -e # Exit immediately if any command fails
 
-FOLDERS_TO_FORMAT=("src/maxdiffusion" "end_to_end/tpu")
+FOLDERS_TO_FORMAT=("src/maxdiffusion" "end_to_end/tpu" "benchmarks")
 LINE_LENGTH=$(grep -E "^max-line-length=" pylintrc | cut -d '=' -f 2)
 
 # Check for --check flag
