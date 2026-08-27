@@ -344,6 +344,77 @@ def save_images(config, images):
   return paths
 
 
+def get_gcs_output_path(config) -> str:
+  """Returns the GCS target directory path if output_dir or base_output_directory starts with gs://."""
+  output_dir = getattr(config, "output_dir", "")
+  base_output_dir = getattr(config, "base_output_directory", "")
+  gcs_root = output_dir if output_dir.startswith("gs://") else (
+      base_output_dir if base_output_dir.startswith("gs://") else ""
+  )
+  if not gcs_root:
+    return ""
+  run_name = getattr(config, "run_name", "")
+  return os.path.join(gcs_root, run_name) if run_name else gcs_root
+
+
+def load_prompts(prompt_file_path: str = "", default_prompt: str = "") -> list[str]:
+  """Loads prompts from a text file (separated by newline) or returns default prompt.
+
+  Supports local files, GCS URIs (gs://bucket/path/to/prompts.txt), and HTTP/HTTPS URLs.
+  Each line in the file is treated as a separate prompt. Empty lines and whitespace are stripped.
+  """
+  if not prompt_file_path:
+    if default_prompt:
+      return [default_prompt]
+    return []
+
+  prompt_file_path = prompt_file_path.strip()
+  if not prompt_file_path:
+    if default_prompt:
+      return [default_prompt]
+    return []
+
+  max_logging.log(f"Loading prompts from file: {prompt_file_path}")
+  raw_lines = []
+
+  if prompt_file_path.startswith("gs://"):
+    try:
+      bucket_name, prefix_name = parse_gcs_bucket_and_prefix(prompt_file_path)
+      storage_client = storage.Client()
+      bucket = storage_client.get_bucket(bucket_name)
+      blob = bucket.blob(prefix_name)
+      content = blob.download_as_text()
+      raw_lines = content.splitlines()
+    except Exception as e:
+      max_logging.log(f"Error loading prompts from GCS path '{prompt_file_path}': {e}")
+      raise
+  elif prompt_file_path.startswith("http://") or prompt_file_path.startswith("https://"):
+    try:
+      import requests
+
+      response = requests.get(prompt_file_path)
+      response.raise_for_status()
+      raw_lines = response.text.splitlines()
+    except Exception as e:
+      max_logging.log(f"Error downloading prompts from URL '{prompt_file_path}': {e}")
+      raise
+  else:
+    if not os.path.isfile(prompt_file_path):
+      raise FileNotFoundError(f"Prompt file not found at local path: {prompt_file_path}")
+    with open(prompt_file_path, "r", encoding="utf-8") as f:
+      raw_lines = f.readlines()
+
+  prompts = [line.strip() for line in raw_lines if line.strip()]
+  if not prompts:
+    if default_prompt:
+      max_logging.log(f"Warning: Prompt file '{prompt_file_path}' was empty. Falling back to default prompt.")
+      return [default_prompt]
+    raise ValueError(f"Prompt file '{prompt_file_path}' contains no valid non-empty prompts.")
+
+  max_logging.log(f"Successfully loaded {len(prompts)} prompt(s) from {prompt_file_path}")
+  return prompts
+
+
 def upload_file_to_gcs(output_dir: str, file_path: str, subdir: str = ""):
   """Uploads one generated file to {output_dir}/{subdir}/, logging failures.
 
@@ -354,7 +425,7 @@ def upload_file_to_gcs(output_dir: str, file_path: str, subdir: str = ""):
     parts = path_without_scheme.split("/", 1)
     bucket_name = parts[0]
     folder_name = parts[1] if len(parts) > 1 else ""
-    destination_blob_name = os.path.join(folder_name, subdir, os.path.basename(file_path))
+    destination_blob_name = os.path.normpath(os.path.join(folder_name, subdir, os.path.basename(file_path))).lstrip("/")
 
     storage_client = storage.Client()
     bucket = storage_client.bucket(bucket_name)

@@ -940,7 +940,7 @@ class WanPipeline:
       trace["vae_decode_tpu"] = time.perf_counter() - t_vae_tpu_start
 
     if hasattr(video, "addressable_shards") and len(video.addressable_shards) > 0:
-      video = np.asarray(video.addressable_shards[0].data)
+      video = np.concatenate([np.asarray(shard.data) for shard in video.addressable_shards], axis=0)
     else:
       video = np.asarray(video)
     return video

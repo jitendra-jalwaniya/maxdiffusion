@@ -169,11 +169,19 @@ def run(config):
     writer.add_scalar("inference/generation_time", generation_time, global_step=0)
 
   filename_prefix = "animate_"
-  os.makedirs(config.output_dir, exist_ok=True)
+  gcs_output_path = max_utils.get_gcs_output_path(config)
+  if not gcs_output_path:
+    os.makedirs(config.output_dir, exist_ok=True)
   for i, video in enumerate(videos):
-    video_path = os.path.join(config.output_dir, f"{filename_prefix}wan_output_{config.seed}_{i}.mp4")
+    video_path = (
+        f"{filename_prefix}wan_output_{config.seed}_{i}.mp4"
+        if gcs_output_path
+        else os.path.join(config.output_dir, f"{filename_prefix}wan_output_{config.seed}_{i}.mp4")
+    )
     export_to_video(video, video_path, fps=config.fps)
     max_logging.log(f"Saved video to {video_path}")
+    if gcs_output_path:
+      max_utils.upload_file_to_gcs(gcs_output_path, video_path, subdir="videos")
 
   if max_utils.profiler_enabled(config):
     s0 = time.perf_counter()
