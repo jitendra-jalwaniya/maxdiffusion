@@ -69,8 +69,8 @@ REMOTE_DIR_OVERRIDE=""
 TPU_NAME="${TPU_NAME:-jalwaniya-v6e-8}"
 TPU_ZONE="${TPU_ZONE:-southamerica-west1-a}"
 TPU_PROJECT="${TPU_PROJECT:-tpu-prod-env-one-vm}"
-GIT_REPO="${GIT_REPO:-https://github.com/google/maxdiffusion.git}"
-GIT_BRANCH="${GIT_BRANCH:-main}"
+GIT_REPO="${GIT_REPO:-https://github.com/jitendra-jalwaniya/maxdiffusion.git}"
+GIT_BRANCH="${GIT_BRANCH:-two_machines}"
 
 SSH_MODE=false
 
