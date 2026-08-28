@@ -38,7 +38,7 @@ set -euo pipefail
 GCS_BUCKET="${GCS_BUCKET:-}"
 RUN_NAME="${RUN_NAME:-wan-inference}"
 SEED="${SEED:-12345}"
-PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_110.txt}"
+PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_3.txt}"
 CONFIG_FILE="${CONFIG_FILE:-src/maxdiffusion/configs/base_wan_27b.yml}"
 ATTENTION="${ATTENTION:-ulysses_custom}"
 NUM_STEPS="${NUM_STEPS:-40}"
@@ -68,7 +68,7 @@ TPU_PROJECT="${TPU_PROJECT:-tpu-prod-env-one-vm}"
 REMOTE_USER="${REMOTE_USER:-$USER}"
 REMOTE_DIR="${REMOTE_DIR:-~/maxdiffusion}"
 GIT_REPO="${GIT_REPO:-https://github.com/jitendra-jalwaniya/maxdiffusion.git}"
-GIT_BRANCH="${GIT_BRANCH:-main}"
+GIT_BRANCH="${GIT_BRANCH:-two_machines}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/google_compute_engine}"
 
 SSH_MODE=false
@@ -139,7 +139,6 @@ echo "==> [TPU VM] Ensuring MaxDiffusion repository is set up at ${REMOTE_DIR}..
 if [ ! -d "${REMOTE_DIR}" ]; then
   mkdir -p "\$(dirname "${REMOTE_DIR}")"
   git clone "${GIT_REPO}" "${REMOTE_DIR}"
-  git checkout two_machines
 fi
 
 cd "${REMOTE_DIR}"
@@ -199,8 +198,8 @@ fi
 if [ -f "${PROMPT_FILE}" ]; then
   gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub110.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub110.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
+if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
+  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
 
 echo "==> [TPU VM] Video generation completed successfully!"
@@ -296,8 +295,8 @@ fi
 if [ -f "${PROMPT_FILE}" ]; then
   gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub110.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub110.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
+if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
+  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
 
 echo ""
