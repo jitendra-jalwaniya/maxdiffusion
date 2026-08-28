@@ -67,7 +67,7 @@ TPU_ZONE="${TPU_ZONE:-southamerica-west1-a}"
 TPU_PROJECT="${TPU_PROJECT:-tpu-prod-env-one-vm}"
 REMOTE_USER="${REMOTE_USER:-$USER}"
 REMOTE_DIR="${REMOTE_DIR:-~/maxdiffusion}"
-GIT_REPO="${GIT_REPO:-https://github.com/google/maxdiffusion.git}"
+GIT_REPO="${GIT_REPO:-https://github.com/jitendra-jalwaniya/maxdiffusion.git}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/google_compute_engine}"
 
