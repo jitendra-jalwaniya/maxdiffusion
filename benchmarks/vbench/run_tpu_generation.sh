@@ -38,7 +38,7 @@ set -euo pipefail
 GCS_BUCKET="${GCS_BUCKET:-}"
 RUN_NAME="${RUN_NAME:-wan-inference}"
 SEED="${SEED:-12345}"
-PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_3.txt}"
+PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_110.txt}"
 CONFIG_FILE="${CONFIG_FILE:-src/maxdiffusion/configs/base_wan_27b.yml}"
 ATTENTION="${ATTENTION:-ulysses_custom}"
 NUM_STEPS="${NUM_STEPS:-40}"
@@ -60,18 +60,17 @@ USE_BASE2_EXP="${USE_BASE2_EXP:-true}"
 USE_EXPERIMENTAL_SCHEDULER="${USE_EXPERIMENTAL_SCHEDULER:-true}"
 USE_BATCHED_TEXT_ENCODER="${USE_BATCHED_TEXT_ENCODER:-true}"
 FLASH_BLOCK_SIZES='{"block_q" : 3328, "block_kv_compute" : 256, "block_kv" : 2816, "block_kv_compute_in" : 256, "block_q_dkv": 3328, "block_kv_dkv" : 2816, "block_kv_dkv_compute" : 256, "block_q_dq" : 3328, "block_kv_dq" : 2816, "heads_per_tile" : 1}'
-HF_HOME="${HF_HOME:-/mnt/disks/external_disk/hf_cache}"
-TMPDIR="${TMPDIR:-/mnt/disks/external_disk/tmp}"
+# HuggingFace cache and temp directory overrides (if explicitly supplied)
+HF_HOME_OVERRIDE=""
+TMPDIR_OVERRIDE=""
+REMOTE_DIR_OVERRIDE=""
 
 # Remote TPU VM details (used if --ssh mode is requested)
 TPU_NAME="${TPU_NAME:-jalwaniya-v6e-8}"
 TPU_ZONE="${TPU_ZONE:-southamerica-west1-a}"
 TPU_PROJECT="${TPU_PROJECT:-tpu-prod-env-one-vm}"
-REMOTE_USER="${REMOTE_USER:-$USER}"
-REMOTE_DIR="${REMOTE_DIR:-~/maxdiffusion}"
-GIT_REPO="${GIT_REPO:-https://github.com/jitendra-jalwaniya/maxdiffusion.git}"
-GIT_BRANCH="${GIT_BRANCH:-two_machines}"
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/google_compute_engine}"
+GIT_REPO="${GIT_REPO:-https://github.com/google/maxdiffusion.git}"
+GIT_BRANCH="${GIT_BRANCH:-main}"
 
 SSH_MODE=false
 
@@ -94,9 +93,19 @@ for arg in "$@"; do
       echo "  TPU_ZONE           TPU VM zone (for SSH mode)"
       echo "  TPU_PROJECT        GCP project of the TPU VM"
       echo "  PROMPT_FILE        Path to prompt file (default: ./benchmarks/vbench/prompts_110.txt)"
-      echo "  HF_HOME            HuggingFace cache directory (default: /mnt/disks/external_disk/hf_cache)"
-      echo "  TMPDIR             Temporary files directory (default: /mnt/disks/external_disk/tmp)"
+      echo "  HF_HOME            HuggingFace cache directory (optional override)"
+      echo "  TMPDIR             Temporary files directory (optional override)"
+      echo "  REMOTE_DIR         MaxDiffusion repo path on TPU VM (default: \$HOME/maxdiffusion)"
       exit 0
+      ;;
+    HF_HOME=*)
+      HF_HOME_OVERRIDE="${arg#*=}"
+      ;;
+    TMPDIR=*)
+      TMPDIR_OVERRIDE="${arg#*=}"
+      ;;
+    REMOTE_DIR=*)
+      REMOTE_DIR_OVERRIDE="${arg#*=}"
       ;;
     *=*)
       KEY="${arg%%=*}"
@@ -139,18 +148,33 @@ if [[ "${SSH_MODE}" == "true" ]]; then
   REMOTE_SCRIPT=$(cat <<EOF
 set -euo pipefail
 
-# Ensure HuggingFace cache and temp files use the external disk
-export HF_HOME="${HF_HOME}"
-export TMPDIR="${TMPDIR}"
-mkdir -p "\${HF_HOME}" "\${TMPDIR}"
-
-echo "==> [TPU VM] Ensuring MaxDiffusion repository is set up at ${REMOTE_DIR}..."
-if [ ! -d "${REMOTE_DIR}" ]; then
-  mkdir -p "\$(dirname "${REMOTE_DIR}")"
-  git clone "${GIT_REPO}" "${REMOTE_DIR}"
+# Configure HuggingFace cache and temp directory on TPU VM
+if [ -n "${HF_HOME_OVERRIDE}" ]; then
+  export HF_HOME="${HF_HOME_OVERRIDE}"
+elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
+  export HF_HOME="/mnt/disks/external_disk/hf_cache"
+else
+  export HF_HOME="\$HOME/hf_cache"
 fi
 
-cd "${REMOTE_DIR}"
+if [ -n "${TMPDIR_OVERRIDE}" ]; then
+  export TMPDIR="${TMPDIR_OVERRIDE}"
+elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
+  export TMPDIR="/mnt/disks/external_disk/tmp"
+else
+  export TMPDIR="/tmp"
+fi
+
+mkdir -p "\${HF_HOME}" "\${TMPDIR}"
+
+REMOTE_DIR="${REMOTE_DIR_OVERRIDE:-\$HOME/maxdiffusion}"
+echo "==> [TPU VM] Ensuring MaxDiffusion repository is set up at \${REMOTE_DIR}..."
+if [ ! -d "\${REMOTE_DIR}" ]; then
+  mkdir -p "\$(dirname "\${REMOTE_DIR}")"
+  git clone "${GIT_REPO}" "\${REMOTE_DIR}"
+fi
+
+cd "\${REMOTE_DIR}"
 git checkout "${GIT_BRANCH}" || true
 git pull origin "${GIT_BRANCH}" || true
 
@@ -207,8 +231,8 @@ fi
 if [ -f "${PROMPT_FILE}" ]; then
   gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
+if [ -f "./benchmarks/vbench/VBench_full_info_sub110.json" ]; then
+  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub110.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
 
 echo "==> [TPU VM] Video generation completed successfully!"
@@ -247,9 +271,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
 
-# Ensure HuggingFace cache and temp files use the external disk
-export HF_HOME="${HF_HOME}"
-export TMPDIR="${TMPDIR}"
+# Ensure HuggingFace cache and temp files are configured
+if [ -n "${HF_HOME_OVERRIDE}" ]; then
+  export HF_HOME="${HF_HOME_OVERRIDE}"
+elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
+  export HF_HOME="/mnt/disks/external_disk/hf_cache"
+else
+  export HF_HOME="${HOME}/hf_cache"
+fi
+
+if [ -n "${TMPDIR_OVERRIDE}" ]; then
+  export TMPDIR="${TMPDIR_OVERRIDE}"
+elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
+  export TMPDIR="/mnt/disks/external_disk/tmp"
+else
+  export TMPDIR="${TMPDIR:-/tmp}"
+fi
+
 mkdir -p "${HF_HOME}" "${TMPDIR}"
 
 # 1. Environment Setup
@@ -309,8 +347,8 @@ fi
 if [ -f "${PROMPT_FILE}" ]; then
   gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
+if [ -f "./benchmarks/vbench/VBench_full_info_sub110.json" ]; then
+  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub110.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
 
 echo ""

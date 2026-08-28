@@ -40,7 +40,7 @@ GCS_BUCKET="${GCS_BUCKET:-}"
 RUN_NAME="${RUN_NAME:-wan-inference}"
 GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-${RUN_NAME}/videos}"
 GCS_RESULTS_DIR="${GCS_RESULTS_DIR:-${RUN_NAME}/vbench_results}"
-WORK_DIR="${WORK_DIR:-$HOME/vbench_evaluation}"
+WORK_DIR_OVERRIDE=""
 VBENCH_REPO="${VBENCH_REPO:-https://github.com/Vchitect/VBench.git}"
 VBENCH_BRANCH="${VBENCH_BRANCH:-master}"
 MAXDIFFUSION_REPO="${MAXDIFFUSION_REPO:-https://github.com/google/maxdiffusion.git}"
@@ -70,7 +70,6 @@ DIMENSIONS=(
 GPU_NAME="${GPU_NAME:-}"
 GPU_ZONE="${GPU_ZONE:-us-central1-a}"
 GPU_PROJECT="${GPU_PROJECT:-}"
-SSH_KEY="${SSH_KEY:-$HOME/.ssh/google_compute_engine}"
 
 SSH_MODE=false
 
@@ -91,12 +90,15 @@ for arg in "$@"; do
       echo "  RUN_NAME           Run name used during generation (default: wan-inference)"
       echo "  GCS_VIDEO_DIR      GCS prefix path to videos (default: \${RUN_NAME}/videos)"
       echo "  GCS_RESULTS_DIR    GCS prefix path to upload results (default: \${RUN_NAME}/vbench_results)"
-      echo "  WORK_DIR           Working directory on GPU VM (default: ~/vbench_evaluation)"
+      echo "  WORK_DIR           Working directory on GPU VM (default: \$HOME/vbench_evaluation)"
       echo "  GPU_NAME           GPU VM name (for SSH mode)"
       echo "  GPU_ZONE           GPU VM zone (for SSH mode)"
       echo "  GPU_PROJECT        GCP project of the GPU VM"
       echo "  DIMENSIONS         Space-separated list of dimensions to evaluate (default: all 16)"
       exit 0
+      ;;
+    WORK_DIR=*)
+      WORK_DIR_OVERRIDE="${arg#*=}"
       ;;
     *=*)
       KEY="${arg%%=*}"
@@ -150,8 +152,10 @@ if [[ "${SSH_MODE}" == "true" ]]; then
   DIMS_STR="${DIMENSIONS[*]}"
   REMOTE_SCRIPT=$(cat <<EOF
 set -euo pipefail
-mkdir -p "${WORK_DIR}"
-cd "${WORK_DIR}"
+
+WORK_DIR="${WORK_DIR_OVERRIDE:-\$HOME/vbench_evaluation}"
+mkdir -p "\${WORK_DIR}"
+cd "\${WORK_DIR}"
 
 echo "==> [GPU VM] Setting up Python virtual environment..."
 python3 -m venv venv || python3 -m uv venv venv
@@ -230,17 +234,17 @@ PYEOF
 
 echo "==> [GPU VM] Running VBench evaluation..."
 cd VBench
-mkdir -p "${WORK_DIR}/evaluation_results"
+mkdir -p "\${WORK_DIR}/evaluation_results"
 python3 evaluate.py \
-  --videos_path "${WORK_DIR}/vbench_videos" \
-  --full_json_dir "${WORK_DIR}/VBench_full_info_sub110.json" \
-  --output_path "${WORK_DIR}/evaluation_results" \
+  --videos_path "\${WORK_DIR}/vbench_videos" \
+  --full_json_dir "\${WORK_DIR}/VBench_full_info_sub110.json" \
+  --output_path "\${WORK_DIR}/evaluation_results" \
   --dimension ${DIMS_STR} \
   --mode vbench_standard
 
 echo "==> [GPU VM] Publishing evaluation results to GCS..."
-gcloud storage cp -r "${WORK_DIR}/evaluation_results/*" "gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}/" || \
-gsutil -m cp -r "${WORK_DIR}/evaluation_results/*" "gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}/"
+gcloud storage cp -r "\${WORK_DIR}/evaluation_results/*" "gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}/" || \
+gsutil -m cp -r "\${WORK_DIR}/evaluation_results/*" "gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}/"
 
 echo "==> [GPU VM] VBench evaluation complete! Results published to gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}/"
 EOF
@@ -259,6 +263,7 @@ fi
 # ------------------------------------------------------------------------------
 # Local GPU VM Execution
 # ------------------------------------------------------------------------------
+WORK_DIR="${WORK_DIR_OVERRIDE:-${WORK_DIR:-$HOME/vbench_evaluation}}"
 echo "=========================================================================="
 echo "Starting VBench Evaluation on GPU VM (Local Execution)"
 echo "  GCS Bucket:      gs://${GCS_BUCKET}"
