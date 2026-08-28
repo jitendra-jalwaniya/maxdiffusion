@@ -139,6 +139,7 @@ echo "==> [TPU VM] Ensuring MaxDiffusion repository is set up at ${REMOTE_DIR}..
 if [ ! -d "${REMOTE_DIR}" ]; then
   mkdir -p "\$(dirname "${REMOTE_DIR}")"
   git clone "${GIT_REPO}" "${REMOTE_DIR}"
+  git checkout two_machines
 fi
 
 cd "${REMOTE_DIR}"
