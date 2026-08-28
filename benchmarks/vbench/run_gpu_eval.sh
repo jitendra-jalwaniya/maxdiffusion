@@ -207,7 +207,7 @@ fi
 echo "==> [GPU VM] Installing VBench & GPU dependencies..."
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
 pip install "numpy<2"
-(cd VBench && pip install -e .)
+(cd VBench && pip install --no-build-isolation -e .)
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
 echo "==> [GPU VM] Fetching VBench_full_info_sub110.json..."
@@ -362,8 +362,7 @@ fi
 echo "Installing VBench dependencies..."
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
 pip install "numpy<2"
-pip install vbench
-(cd VBench && pip install -e .)
+(cd VBench && pip install --no-build-isolation -e .)
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
 # 2. Benchmark JSON Metadata Setup
