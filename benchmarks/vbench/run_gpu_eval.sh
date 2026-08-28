@@ -207,7 +207,6 @@ fi
 echo "==> [GPU VM] Installing VBench & GPU dependencies..."
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
 pip install "numpy<2"
-pip install vbench
 (cd VBench && pip install -e .)
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
