@@ -157,8 +157,42 @@ WORK_DIR="${WORK_DIR_OVERRIDE:-\$HOME/vbench_evaluation}"
 mkdir -p "\${WORK_DIR}"
 cd "\${WORK_DIR}"
 
-echo "==> [GPU VM] Setting up Python virtual environment..."
-python3 -m venv venv || python3 -m uv venv venv
+echo "==> [GPU VM] Ensuring build and video codec system packages..."
+if command -v sudo >/dev/null 2>&1; then
+  sudo apt-get update -y && sudo apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+elif command -v apt-get >/dev/null 2>&1; then
+  apt-get update -y && apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+fi
+
+echo "==> [GPU VM] Setting up Python virtual environment (Python 3.10-3.12)..."
+export PATH="\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || python3 -m pip install --user uv 2>/dev/null || true
+  export PATH="\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH"
+fi
+
+if [ -d "venv" ]; then
+  if ! venv/bin/python3 -c 'import sys; assert (3, 10) <= sys.version_info < (3, 13)' 2>/dev/null; then
+    echo "Recreating venv with compatible Python version (3.10-3.12)..."
+    rm -rf venv
+  fi
+fi
+
+if [ ! -d "venv" ]; then
+  if python3 -c 'import sys; assert (3, 10) <= sys.version_info < (3, 13)' 2>/dev/null; then
+    python3 -m venv venv
+  elif command -v uv >/dev/null 2>&1; then
+    uv venv venv --python 3.11 --seed || uv venv venv --python 3.12 --seed || uv venv venv --python 3.10 --seed || python3 -m venv venv
+  elif command -v python3.11 >/dev/null 2>&1; then
+    python3.11 -m venv venv
+  elif command -v python3.12 >/dev/null 2>&1; then
+    python3.12 -m venv venv
+  elif command -v python3.10 >/dev/null 2>&1; then
+    python3.10 -m venv venv
+  else
+    python3 -m venv venv
+  fi
+fi
 source venv/bin/activate
 
 pip install --upgrade pip setuptools wheel
@@ -172,9 +206,10 @@ fi
 
 echo "==> [GPU VM] Installing VBench & GPU dependencies..."
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
+pip install "numpy<2"
 pip install vbench
 (cd VBench && pip install -e .)
-pip install pandas tabulate google-cloud-storage tqdm opencv-python
+pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
 echo "==> [GPU VM] Fetching VBench_full_info_sub110.json..."
 if [ ! -f "VBench_full_info_sub110.json" ]; then
@@ -278,8 +313,40 @@ cd "${WORK_DIR}"
 
 # 1. Environment & VBench Setup
 echo "==> Step 1/5: Setting up Python environment and VBench..."
+echo "Ensuring build and video codec system packages..."
+if command -v sudo >/dev/null 2>&1; then
+  sudo apt-get update -y && sudo apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+elif command -v apt-get >/dev/null 2>&1; then
+  apt-get update -y && apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+fi
+
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || python3 -m pip install --user uv 2>/dev/null || true
+  export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+fi
+
+if [ -d "venv" ]; then
+  if ! venv/bin/python3 -c 'import sys; assert (3, 10) <= sys.version_info < (3, 13)' 2>/dev/null; then
+    echo "Recreating venv with compatible Python version (3.10-3.12)..."
+    rm -rf venv
+  fi
+fi
+
 if [ ! -d "venv" ]; then
-  python3 -m venv venv || python3 -m uv venv venv
+  if python3 -c 'import sys; assert (3, 10) <= sys.version_info < (3, 13)' 2>/dev/null; then
+    python3 -m venv venv
+  elif command -v uv >/dev/null 2>&1; then
+    uv venv venv --python 3.11 --seed || uv venv venv --python 3.12 --seed || uv venv venv --python 3.10 --seed || python3 -m venv venv
+  elif command -v python3.11 >/dev/null 2>&1; then
+    python3.11 -m venv venv
+  elif command -v python3.12 >/dev/null 2>&1; then
+    python3.12 -m venv venv
+  elif command -v python3.10 >/dev/null 2>&1; then
+    python3.10 -m venv venv
+  else
+    python3 -m venv venv
+  fi
 fi
 source venv/bin/activate
 
@@ -295,9 +362,10 @@ fi
 
 echo "Installing VBench dependencies..."
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
+pip install "numpy<2"
 pip install vbench
 (cd VBench && pip install -e .)
-pip install pandas tabulate google-cloud-storage tqdm opencv-python
+pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
 # 2. Benchmark JSON Metadata Setup
 echo "==> Step 2/5: Locating VBench_full_info_sub110.json..."
