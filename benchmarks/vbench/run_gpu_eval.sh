@@ -20,7 +20,7 @@
 # This script:
 #   1. Clones and sets up the VBench repository and dependencies on a GPU VM.
 #   2. Downloads generated WAN 2.2 videos from the specified GCS bucket.
-#   3. Aligns video files to VBench prompt specifications using VBench_full_info_sub110.json.
+#   3. Aligns video files to VBench prompt specifications using VBench_full_info_sub3.json.
 #   4. Evaluates the videos across VBench dimensions using evaluate.py.
 #   5. Publishes evaluation metrics and JSON results back to the GCS bucket.
 #
@@ -210,15 +210,15 @@ pip install "numpy<2"
 (cd VBench && pip install --no-build-isolation -e .)
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
-echo "==> [GPU VM] Fetching VBench_full_info_sub110.json..."
-if [ ! -f "VBench_full_info_sub110.json" ]; then
+echo "==> [GPU VM] Fetching VBench_full_info_sub3.json..."
+if [ ! -f "VBench_full_info_sub3.json" ]; then
   # Try downloading from GCS first
-  if ! gcloud storage cp "gs://${GCS_BUCKET}/${RUN_NAME}/VBench_full_info_sub110.json" ./ 2>/dev/null; then
+  if ! gcloud storage cp "gs://${GCS_BUCKET}/${RUN_NAME}/VBench_full_info_sub3.json" ./ 2>/dev/null; then
     # Fallback to cloning maxdiffusion
     if [ ! -d "maxdiffusion" ]; then
       git clone --depth 1 "${MAXDIFFUSION_REPO}" maxdiffusion
     fi
-    cp maxdiffusion/benchmarks/vbench/VBench_full_info_sub110.json ./
+    cp maxdiffusion/benchmarks/vbench/VBench_full_info_sub3.json ./
   fi
 fi
 
@@ -232,7 +232,7 @@ mkdir -p vbench_videos
 python3 - <<'PYEOF'
 import json, os, glob, shutil
 
-with open('VBench_full_info_sub110.json', 'r', encoding='utf-8') as f:
+with open('VBench_full_info_sub3.json', 'r', encoding='utf-8') as f:
     bench_data = json.load(f)
 
 downloaded = sorted(glob.glob('downloaded_videos/*.mp4'))
@@ -271,7 +271,7 @@ cd VBench
 mkdir -p "\${WORK_DIR}/evaluation_results"
 python3 evaluate.py \
   --videos_path "\${WORK_DIR}/vbench_videos" \
-  --full_json_dir "\${WORK_DIR}/VBench_full_info_sub110.json" \
+  --full_json_dir "\${WORK_DIR}/VBench_full_info_sub3.json" \
   --output_path "\${WORK_DIR}/evaluation_results" \
   --dimension ${DIMS_STR} \
   --mode vbench_standard
@@ -366,25 +366,25 @@ pip install "numpy<2"
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
 # 2. Benchmark JSON Metadata Setup
-echo "==> Step 2/5: Locating VBench_full_info_sub110.json..."
+echo "==> Step 2/5: Locating VBench_full_info_sub3.json..."
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-JSON_DEST="${WORK_DIR}/VBench_full_info_sub110.json"
+JSON_DEST="${WORK_DIR}/VBench_full_info_sub3.json"
 if [[ -n "${BENCHMARK_JSON_PATH}" && -f "${BENCHMARK_JSON_PATH}" ]]; then
   cp "${BENCHMARK_JSON_PATH}" "${JSON_DEST}"
-elif [ -f "${REPO_ROOT}/benchmarks/vbench/VBench_full_info_sub110.json" ]; then
-  cp "${REPO_ROOT}/benchmarks/vbench/VBench_full_info_sub110.json" "${JSON_DEST}"
-elif [ -f "${WORK_DIR}/VBench_full_info_sub110.json" ]; then
+elif [ -f "${REPO_ROOT}/benchmarks/vbench/VBench_full_info_sub3.json" ]; then
+  cp "${REPO_ROOT}/benchmarks/vbench/VBench_full_info_sub3.json" "${JSON_DEST}"
+elif [ -f "${WORK_DIR}/VBench_full_info_sub3.json" ]; then
   echo "Using existing ${JSON_DEST}"
 else
-  echo "Attempting to download VBench_full_info_sub110.json from GCS..."
-  if ! gcloud storage cp "gs://${GCS_BUCKET}/${RUN_NAME}/VBench_full_info_sub110.json" "${JSON_DEST}" 2>/dev/null; then
-    echo "Cloning MaxDiffusion to fetch VBench_full_info_sub110.json..."
+  echo "Attempting to download VBench_full_info_sub3.json from GCS..."
+  if ! gcloud storage cp "gs://${GCS_BUCKET}/${RUN_NAME}/VBench_full_info_sub3.json" "${JSON_DEST}" 2>/dev/null; then
+    echo "Cloning MaxDiffusion to fetch VBench_full_info_sub3.json..."
     if [ ! -d "maxdiffusion" ]; then
       git clone --depth 1 "${MAXDIFFUSION_REPO}" maxdiffusion
     fi
-    cp maxdiffusion/benchmarks/vbench/VBench_full_info_sub110.json "${JSON_DEST}"
+    cp maxdiffusion/benchmarks/vbench/VBench_full_info_sub3.json "${JSON_DEST}"
   fi
 fi
 
