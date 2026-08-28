@@ -1,0 +1,27 @@
+[
+  {
+    "prompt_en": "A tranquil tableau of kitchen",
+    "dimension": [
+      "temporal_flickering"
+    ]
+  },
+  {
+    "prompt_en": "an orange and a clock",
+    "dimension": [
+      "multiple_objects"
+    ],
+    "auxiliary_info": {
+      "multiple_objects": {
+        "object": "orange and clock"
+      }
+    }
+  },
+  {
+    "prompt_en": "a motorcycle accelerating to gain speed",
+    "dimension": [
+      "subject_consistency",
+      "dynamic_degree",
+      "motion_smoothness"
+    ]
+  }
+]
