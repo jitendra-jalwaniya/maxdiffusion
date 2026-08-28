@@ -60,6 +60,8 @@ USE_BASE2_EXP="${USE_BASE2_EXP:-true}"
 USE_EXPERIMENTAL_SCHEDULER="${USE_EXPERIMENTAL_SCHEDULER:-true}"
 USE_BATCHED_TEXT_ENCODER="${USE_BATCHED_TEXT_ENCODER:-true}"
 FLASH_BLOCK_SIZES='{"block_q" : 3328, "block_kv_compute" : 256, "block_kv" : 2816, "block_kv_compute_in" : 256, "block_q_dkv": 3328, "block_kv_dkv" : 2816, "block_kv_dkv_compute" : 256, "block_q_dq" : 3328, "block_kv_dq" : 2816, "heads_per_tile" : 1}'
+HF_HOME="${HF_HOME:-/mnt/disks/external_disk/hf_cache}"
+TMPDIR="${TMPDIR:-/mnt/disks/external_disk/tmp}"
 
 # Remote TPU VM details (used if --ssh mode is requested)
 TPU_NAME="${TPU_NAME:-jalwaniya-v6e-8}"
@@ -92,6 +94,8 @@ for arg in "$@"; do
       echo "  TPU_ZONE           TPU VM zone (for SSH mode)"
       echo "  TPU_PROJECT        GCP project of the TPU VM"
       echo "  PROMPT_FILE        Path to prompt file (default: ./benchmarks/vbench/prompts_110.txt)"
+      echo "  HF_HOME            HuggingFace cache directory (default: /mnt/disks/external_disk/hf_cache)"
+      echo "  TMPDIR             Temporary files directory (default: /mnt/disks/external_disk/tmp)"
       exit 0
       ;;
     *=*)
@@ -134,6 +138,11 @@ if [[ "${SSH_MODE}" == "true" ]]; then
 
   REMOTE_SCRIPT=$(cat <<EOF
 set -euo pipefail
+
+# Ensure HuggingFace cache and temp files use the external disk
+export HF_HOME="${HF_HOME}"
+export TMPDIR="${TMPDIR}"
+mkdir -p "\${HF_HOME}" "\${TMPDIR}"
 
 echo "==> [TPU VM] Ensuring MaxDiffusion repository is set up at ${REMOTE_DIR}..."
 if [ ! -d "${REMOTE_DIR}" ]; then
@@ -237,6 +246,11 @@ echo "==========================================================================
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "${REPO_ROOT}"
+
+# Ensure HuggingFace cache and temp files use the external disk
+export HF_HOME="${HF_HOME}"
+export TMPDIR="${TMPDIR}"
+mkdir -p "${HF_HOME}" "${TMPDIR}"
 
 # 1. Environment Setup
 echo "==> Step 1/3: Verifying Python environment and dependencies..."
