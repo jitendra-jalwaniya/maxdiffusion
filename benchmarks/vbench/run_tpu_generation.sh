@@ -20,7 +20,7 @@
 # This script:
 #   1. Clones/syncs MaxDiffusion repository on the TPU VM.
 #   2. Installs Python dependencies via setup.sh for TPU devices.
-#   3. Executes WAN 2.2 27B inference on 110 VBench benchmark prompts.
+#   3. Executes WAN 2.2 27B inference on 3 VBench benchmark prompts.
 #   4. Stores the generated video files directly in the specified GCS bucket.
 #
 # Usage (Directly on TPU VM):
@@ -38,7 +38,7 @@ set -euo pipefail
 GCS_BUCKET="${GCS_BUCKET:-}"
 RUN_NAME="${RUN_NAME:-wan-inference}"
 SEED="${SEED:-12345}"
-PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_110.txt}"
+PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_3.txt}"
 CONFIG_FILE="${CONFIG_FILE:-src/maxdiffusion/configs/base_wan_27b.yml}"
 ATTENTION="${ATTENTION:-ulysses_custom}"
 NUM_STEPS="${NUM_STEPS:-40}"
@@ -92,7 +92,7 @@ for arg in "$@"; do
       echo "  TPU_NAME           TPU VM name (for SSH mode)"
       echo "  TPU_ZONE           TPU VM zone (for SSH mode)"
       echo "  TPU_PROJECT        GCP project of the TPU VM"
-      echo "  PROMPT_FILE        Path to prompt file (default: ./benchmarks/vbench/prompts_110.txt)"
+      echo "  PROMPT_FILE        Path to prompt file (default: ./benchmarks/vbench/prompts_3.txt)"
       echo "  HF_HOME            HuggingFace cache directory (optional override)"
       echo "  TMPDIR             Temporary files directory (optional override)"
       echo "  REMOTE_DIR         MaxDiffusion repo path on TPU VM (default: \$HOME/maxdiffusion)"
@@ -231,8 +231,8 @@ fi
 if [ -f "${PROMPT_FILE}" ]; then
   gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub110.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub110.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
+if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
+  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
 
 echo "==> [TPU VM] Video generation completed successfully!"
@@ -347,8 +347,8 @@ fi
 if [ -f "${PROMPT_FILE}" ]; then
   gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub110.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub110.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
+if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
+  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
 fi
 
 echo ""
