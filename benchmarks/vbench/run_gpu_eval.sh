@@ -149,11 +149,11 @@ WORK_DIR="${WORK_DIR_OVERRIDE:-\$HOME/vbench_evaluation}"
 mkdir -p "\${WORK_DIR}"
 cd "\${WORK_DIR}"
 
-echo "==> [GPU VM] Ensuring build and video codec system packages..."
+echo "==> [GPU VM] Ensuring build, git, and video codec system packages..."
 if command -v sudo >/dev/null 2>&1; then
-  sudo apt-get update -y && sudo apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+  sudo apt-get update -y && sudo apt-get install -y git curl wget unzip zip python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
 elif command -v apt-get >/dev/null 2>&1; then
-  apt-get update -y && apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+  apt-get update -y && apt-get install -y git curl wget unzip zip python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
 fi
 
 echo "==> [GPU VM] Setting up Python virtual environment (Python 3.10-3.12)..."
@@ -196,13 +196,81 @@ else
   (cd VBench && git pull origin "${VBENCH_BRANCH}" || true)
 fi
 
-echo "==> [GPU VM] Installing VBench & GPU dependencies..."
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
+echo "==> [GPU VM] Checking NVIDIA GPU and driver status..."
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi || true
+else
+  echo "WARNING: nvidia-smi not found. If this VM has an NVIDIA GPU, ensure NVIDIA drivers are installed."
+fi
+
+echo "==> [GPU VM] Installing PyTorch with CUDA support..."
+if ! python3 -c 'import torch; assert torch.cuda.is_available()' 2>/dev/null; then
+  echo "Installing CUDA-enabled PyTorch..."
+  pip uninstall -y torch torchvision 2>/dev/null || true
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple || \
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 --extra-index-url https://pypi.org/simple || \
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --extra-index-url https://pypi.org/simple
+fi
 pip install "numpy<2"
-(cd VBench && pip install --no-build-isolation -e .)
-pip install --no-build-isolation git+https://github.com/openai/CLIP.git
-pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || true
+
+echo "==> [GPU VM] Installing VBench & GPU dependencies..."
+if [ -d "VBench" ]; then
+  (cd VBench && git checkout setup.py vbench/distributed.py evaluate.py 2>/dev/null || true)
+  python3 -c "
+import os
+
+# 1. Patch setup.py to bypass restrictive torch/cuda check during install
+setup_path = 'VBench/setup.py'
+if os.path.exists(setup_path):
+    with open(setup_path, 'r') as f:
+        s = f.read()
+    s = s.replace('def check_torch_version():', 'def check_torch_version():\n    return\n')
+    with open(setup_path, 'w') as f:
+        f.write(s)
+
+# 2. Patch vbench/distributed.py to support gloo fallback when CUDA is not present
+dist_path = 'VBench/vbench/distributed.py'
+if os.path.exists(dist_path):
+    with open(dist_path, 'r') as f:
+        s = f.read()
+    s = s.replace(
+        \"backend = 'gloo' if os.name == 'nt' else 'nccl'\",
+        \"backend = 'gloo' if (os.name == 'nt' or not torch.cuda.is_available()) else 'nccl'\"
+    )
+    s = s.replace(
+        \"torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))\",
+        \"if torch.cuda.is_available():\\n        torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))\"
+    )
+    with open(dist_path, 'w') as f:
+        f.write(s)
+
+# 3. Patch evaluate.py for safe device initialization
+eval_path = 'VBench/evaluate.py'
+if os.path.exists(eval_path):
+    with open(eval_path, 'r') as f:
+        s = f.read()
+    s = s.replace(
+        'device = torch.device(\"cuda\")',
+        'device = torch.device(f\"cuda:{int(os.environ.get(\\'LOCAL_RANK\\', \\'0\\'))}\") if torch.cuda.is_available() else torch.device(\"cpu\")'
+    )
+    with open(eval_path, 'w') as f:
+        f.write(s)
+" 2>/dev/null || true
+fi
+(cd VBench && pip install --no-build-isolation -e . --extra-index-url https://download.pytorch.org/whl/cu121)
+pip install --no-build-isolation git+https://github.com/openai/CLIP.git --extra-index-url https://download.pytorch.org/whl/cu121
+pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' --extra-index-url https://download.pytorch.org/whl/cu121 || true
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
+
+# Verify PyTorch CUDA state after dependency resolution
+if ! python3 -c 'import torch; assert torch.cuda.is_available()' 2>/dev/null; then
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    echo "Reinstalling CUDA-enabled PyTorch to ensure GPU support..."
+    pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple
+  fi
+fi
+
+python3 -c "import torch; print(f'==> [GPU VM] PyTorch {torch.__version__} | CUDA Available: {torch.cuda.is_available()} | Device Count: {torch.cuda.device_count() if torch.cuda.is_available() else 0}')"
 
 echo "==> [GPU VM] Fetching ${BENCHMARK_JSON}..."
 if [ ! -f "${BENCHMARK_JSON}" ]; then
@@ -341,11 +409,11 @@ cd "${WORK_DIR}"
 
 # 1. Environment & VBench Setup
 echo "==> Step 1/5: Setting up Python environment and VBench..."
-echo "Ensuring build and video codec system packages..."
+echo "Ensuring build, git, and video codec system packages..."
 if command -v sudo >/dev/null 2>&1; then
-  sudo apt-get update -y && sudo apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+  sudo apt-get update -y && sudo apt-get install -y git curl wget unzip zip python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
 elif command -v apt-get >/dev/null 2>&1; then
-  apt-get update -y && apt-get install -y python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
+  apt-get update -y && apt-get install -y git curl wget unzip zip python3-dev python3-venv build-essential pkg-config ffmpeg libsm6 libxext6 libgl1 libglib2.0-0 || true
 fi
 
 export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
@@ -388,13 +456,81 @@ else
   (cd VBench && git pull origin "${VBENCH_BRANCH}" || true)
 fi
 
-echo "Installing VBench dependencies..."
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
+echo "Checking NVIDIA GPU and driver status..."
+if command -v nvidia-smi >/dev/null 2>&1; then
+  nvidia-smi || true
+else
+  echo "WARNING: nvidia-smi not found. If this VM has an NVIDIA GPU, ensure NVIDIA drivers are installed."
+fi
+
+echo "Installing PyTorch with CUDA support..."
+if ! python3 -c 'import torch; assert torch.cuda.is_available()' 2>/dev/null; then
+  echo "Installing CUDA-enabled PyTorch..."
+  pip uninstall -y torch torchvision 2>/dev/null || true
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple || \
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124 --extra-index-url https://pypi.org/simple || \
+  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118 --extra-index-url https://pypi.org/simple
+fi
 pip install "numpy<2"
-(cd VBench && pip install --no-build-isolation -e .)
-pip install --no-build-isolation git+https://github.com/openai/CLIP.git
-pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || true
+
+echo "Installing VBench & GPU dependencies..."
+if [ -d "VBench" ]; then
+  (cd VBench && git checkout setup.py vbench/distributed.py evaluate.py 2>/dev/null || true)
+  python3 -c "
+import os
+
+# 1. Patch setup.py to bypass restrictive torch/cuda check during install
+setup_path = 'VBench/setup.py'
+if os.path.exists(setup_path):
+    with open(setup_path, 'r') as f:
+        s = f.read()
+    s = s.replace('def check_torch_version():', 'def check_torch_version():\n    return\n')
+    with open(setup_path, 'w') as f:
+        f.write(s)
+
+# 2. Patch vbench/distributed.py to support gloo fallback when CUDA is not present
+dist_path = 'VBench/vbench/distributed.py'
+if os.path.exists(dist_path):
+    with open(dist_path, 'r') as f:
+        s = f.read()
+    s = s.replace(
+        \"backend = 'gloo' if os.name == 'nt' else 'nccl'\",
+        \"backend = 'gloo' if (os.name == 'nt' or not torch.cuda.is_available()) else 'nccl'\"
+    )
+    s = s.replace(
+        \"torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))\",
+        \"if torch.cuda.is_available():\\n        torch.cuda.set_device(int(os.environ.get('LOCAL_RANK', '0')))\"
+    )
+    with open(dist_path, 'w') as f:
+        f.write(s)
+
+# 3. Patch evaluate.py for safe device initialization
+eval_path = 'VBench/evaluate.py'
+if os.path.exists(eval_path):
+    with open(eval_path, 'r') as f:
+        s = f.read()
+    s = s.replace(
+        'device = torch.device(\"cuda\")',
+        'device = torch.device(f\"cuda:{int(os.environ.get(\\'LOCAL_RANK\\', \\'0\\'))}\") if torch.cuda.is_available() else torch.device(\"cpu\")'
+    )
+    with open(eval_path, 'w') as f:
+        f.write(s)
+" 2>/dev/null || true
+fi
+(cd VBench && pip install --no-build-isolation -e . --extra-index-url https://download.pytorch.org/whl/cu121)
+pip install --no-build-isolation git+https://github.com/openai/CLIP.git --extra-index-url https://download.pytorch.org/whl/cu121
+pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' --extra-index-url https://download.pytorch.org/whl/cu121 || true
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
+
+# Verify PyTorch CUDA state after dependency resolution
+if ! python3 -c 'import torch; assert torch.cuda.is_available()' 2>/dev/null; then
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    echo "Reinstalling CUDA-enabled PyTorch to ensure GPU support..."
+    pip install --force-reinstall --no-deps torch torchvision --index-url https://download.pytorch.org/whl/cu121 --extra-index-url https://pypi.org/simple
+  fi
+fi
+
+python3 -c "import torch; print(f'==> PyTorch {torch.__version__} | CUDA Available: {torch.cuda.is_available()} | Device Count: {torch.cuda.device_count() if torch.cuda.is_available() else 0}')"
 
 # 2. Benchmark JSON Metadata Setup
 echo "==> Step 2/5: Locating ${BENCHMARK_JSON}..."
