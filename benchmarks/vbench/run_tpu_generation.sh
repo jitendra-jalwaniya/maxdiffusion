@@ -17,357 +17,328 @@
 # ==============================================================================
 # VBench TPU Video Generation Script
 #
-# This script:
-#   1. Clones/syncs MaxDiffusion repository on the TPU VM.
-#   2. Installs Python dependencies via setup.sh for TPU devices.
-#   3. Executes WAN 2.2 27B inference on 3 VBench benchmark prompts.
-#   4. Stores the generated video files directly in the specified GCS bucket.
-#
-# Usage (Directly on TPU VM):
-#   bash benchmarks/vbench/run_tpu_generation.sh GCS_BUCKET=<my-bucket-name> [KEY=VALUE ...]
-#
-# Usage (Orchestrated remotely via SSH from local machine):
-#   bash benchmarks/vbench/run_tpu_generation.sh --ssh GCS_BUCKET=<my-bucket-name> TPU_NAME=<tpu-vm-name> [KEY=VALUE ...]
+# Usage:
+#   bash benchmarks/vbench/run_tpu_generation.sh GCS_BUCKET=<bucket> [KEY=VALUE ...]
+#   bash benchmarks/vbench/run_tpu_generation.sh --ssh GCS_BUCKET=<bucket> TPU_NAME=<tpu-vm> [KEY=VALUE ...]
 # ==============================================================================
 
 set -euo pipefail
 
-# ------------------------------------------------------------------------------
-# Default Configuration & Parameters
-# ------------------------------------------------------------------------------
 GCS_BUCKET="${GCS_BUCKET:-}"
-RUN_NAME="${RUN_NAME:-wan-inference}"
-SEED="${SEED:-12345}"
-SEEDS="${SEEDS:-${SEED}}"
-PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_3.txt}"
-CONFIG_FILE="${CONFIG_FILE:-src/maxdiffusion/configs/base_wan_27b.yml}"
-ATTENTION="${ATTENTION:-ulysses_custom}"
-NUM_STEPS="${NUM_STEPS:-40}"
-NUM_FRAMES="${NUM_FRAMES:-81}"
-WIDTH="${WIDTH:-1280}"
-HEIGHT="${HEIGHT:-720}"
-PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-0.125}"
-VAE_SPATIAL="${VAE_SPATIAL:-4}"
-VAE_DECODE_CHUNK="${VAE_DECODE_CHUNK:-4}"
-VAE_WEIGHTS_DTYPE="${VAE_WEIGHTS_DTYPE:-bfloat16}"
-VAE_DTYPE="${VAE_DTYPE:-bfloat16}"
-TEXT_ENCODER_DTYPE="${TEXT_ENCODER_DTYPE:-bfloat16}"
-COMPILE_TEXT_ENCODER="${COMPILE_TEXT_ENCODER:-true}"
-ICI_DATA_PARALLELISM="${ICI_DATA_PARALLELISM:-2}"
-ICI_CONTEXT_PARALLELISM="${ICI_CONTEXT_PARALLELISM:-4}"
-FPS="${FPS:-16}"
-USE_KV_CACHE="${USE_KV_CACHE:-true}"
-USE_BASE2_EXP="${USE_BASE2_EXP:-true}"
-USE_EXPERIMENTAL_SCHEDULER="${USE_EXPERIMENTAL_SCHEDULER:-true}"
-USE_BATCHED_TEXT_ENCODER="${USE_BATCHED_TEXT_ENCODER:-true}"
-FLASH_BLOCK_SIZES='{"block_q" : 3328, "block_kv_compute" : 256, "block_kv" : 2816, "block_kv_compute_in" : 256, "block_q_dkv": 3328, "block_kv_dkv" : 2816, "block_kv_dkv_compute" : 256, "block_q_dq" : 3328, "block_kv_dq" : 2816, "heads_per_tile" : 1}'
-# HuggingFace cache and temp directory overrides (if explicitly supplied)
-HF_HOME_OVERRIDE=""
-TMPDIR_OVERRIDE=""
-REMOTE_DIR_OVERRIDE=""
-
-# Remote TPU VM details (used if --ssh mode is requested)
-TPU_NAME="${TPU_NAME:-jalwaniya-v6e-8}"
-TPU_ZONE="${TPU_ZONE:-southamerica-west1-a}"
-TPU_PROJECT="${TPU_PROJECT:-tpu-prod-env-one-vm}"
-GIT_REPO="${GIT_REPO:-https://github.com/jitendra-jalwaniya/maxdiffusion.git}"
-GIT_BRANCH="${GIT_BRANCH:-two_machines}"
-
+SEED="${SEED:-}"
+SEEDS="${SEEDS:-}"
 SSH_MODE=false
 
-# ------------------------------------------------------------------------------
-# Parse Command Line Arguments
-# ------------------------------------------------------------------------------
-for arg in "$@"; do
-  case "${arg}" in
-    --ssh)
-      SSH_MODE=true
-      ;;
-    --help|-h)
-      echo "Usage: $0 [--ssh] [GCS_BUCKET=bucket_name] [TPU_NAME=tpu_name] [RUN_NAME=run_name] ..."
-      echo ""
-      echo "Options:"
-      echo "  --ssh              Execute commands remotely on TPU VM over SSH"
-      echo "  GCS_BUCKET         (Required) GCS bucket for saving generated videos"
-      echo "  RUN_NAME           Name of this benchmarking run (default: wan-inference)"
-      echo "  TPU_NAME           TPU VM name (for SSH mode)"
-      echo "  TPU_ZONE           TPU VM zone (for SSH mode)"
-      echo "  TPU_PROJECT        GCP project of the TPU VM"
-      echo "  PROMPT_FILE        Path to prompt file (default: ./benchmarks/vbench/prompts_3.txt)"
-      echo "  SEED               Random seed for generation (default: 12345)"
-      echo "  SEEDS              Space-separated seeds for multi-sample generation (e.g. \"12345 12346 12347 12348 12349\")"
-      echo "  HF_HOME            HuggingFace cache directory (optional override)"
-      echo "  TMPDIR             Temporary files directory (optional override)"
-      echo "  REMOTE_DIR         MaxDiffusion repo path on TPU VM (default: \$HOME/maxdiffusion)"
-      exit 0
-      ;;
-    HF_HOME=*)
-      HF_HOME_OVERRIDE="${arg#*=}"
-      ;;
-    TMPDIR=*)
-      TMPDIR_OVERRIDE="${arg#*=}"
-      ;;
-    REMOTE_DIR=*)
-      REMOTE_DIR_OVERRIDE="${arg#*=}"
-      ;;
-    *=*)
-      KEY="${arg%%=*}"
-      VALUE="${arg#*=}"
-      export "${KEY}"="${VALUE}"
-      ;;
-    *)
-      # If single argument provided without key=, treat as GCS_BUCKET if not set
-      if [[ -z "${GCS_BUCKET}" ]]; then
-        GCS_BUCKET="${arg}"
-      fi
-      ;;
-  esac
-done
+DEFAULT_FLASH_BLOCK_SIZES='{"block_q" : 3328, "block_kv_compute" : 256, "block_kv" : 2816, "block_kv_compute_in" : 256, "block_q_dkv": 3328, "block_kv_dkv" : 2816, "block_kv_dkv_compute" : 256, "block_q_dq" : 3328, "block_kv_dq" : 2816, "heads_per_tile" : 1}'
 
-if [[ -z "${GCS_BUCKET}" ]]; then
-  echo "=========================================================================="
-  echo "ERROR: GCS_BUCKET is required!"
-  echo "Example: bash benchmarks/vbench/run_tpu_generation.sh GCS_BUCKET=my-bucket"
-  echo "=========================================================================="
+WAN_OVERRIDES=(
+  "run_name|RUN_NAME|wan-inference"
+  "attention|ATTENTION|ulysses_custom"
+  "num_inference_steps|NUM_STEPS|40"
+  "num_frames|NUM_FRAMES|81"
+  "width|WIDTH|1280"
+  "height|HEIGHT|720"
+  "per_device_batch_size|PER_DEVICE_BATCH_SIZE|0.125"
+  "vae_spatial|VAE_SPATIAL|4"
+  "vae_decode_chunk|VAE_DECODE_CHUNK|4"
+  "vae_weights_dtype|VAE_WEIGHTS_DTYPE|bfloat16"
+  "vae_dtype|VAE_DTYPE|bfloat16"
+  "text_encoder_dtype|TEXT_ENCODER_DTYPE|bfloat16"
+  "compile_text_encoder|COMPILE_TEXT_ENCODER|true"
+  "ici_data_parallelism|ICI_DATA_PARALLELISM|2"
+  "ici_context_parallelism|ICI_CONTEXT_PARALLELISM|4"
+  "fps|FPS|16"
+  "use_kv_cache|USE_KV_CACHE|true"
+  "use_base2_exp|USE_BASE2_EXP|true"
+  "use_experimental_scheduler|USE_EXPERIMENTAL_SCHEDULER|true"
+  "use_batched_text_encoder|USE_BATCHED_TEXT_ENCODER|true"
+  "flash_block_sizes|FLASH_BLOCK_SIZES|"
+  "prompt_file|PROMPT_FILE|./benchmarks/vbench/prompts_3.txt"
+)
+
+usage() {
+  cat <<EOF
+Usage: $0 [--ssh] GCS_BUCKET=<bucket_name> [KEY=VALUE ...]
+
+Required:
+  GCS_BUCKET         GCS bucket for generated videos.
+
+Common options:
+  RUN_NAME           Generation run name (default: wan-inference)
+  SEED               Single seed used when SEEDS is not set (default: 12345)
+  SEEDS              Space-separated seeds for multiple samples.
+  PROMPT_FILE        Prompt file path (default: ./benchmarks/vbench/prompts_3.txt)
+  CONFIG_FILE        WAN config file (default: src/maxdiffusion/configs/base_wan_27b.yml)
+  HF_HOME            Hugging Face cache directory.
+  TMPDIR             Temporary files directory.
+
+SSH options:
+  --ssh              Copy this script to a TPU VM and run it there.
+  TPU_NAME           TPU VM name (default: jalwaniya-v6e-8)
+  TPU_ZONE           TPU VM zone (default: southamerica-west1-a)
+  TPU_PROJECT        TPU VM project (default: tpu-prod-env-one-vm)
+  REMOTE_DIR         MaxDiffusion repo path on the TPU VM (default: \$HOME/maxdiffusion)
+  GIT_REPO           Repo to clone in SSH mode.
+  GIT_BRANCH         Branch to sync in SSH mode (default: two_machines)
+EOF
+}
+
+die() {
+  echo "ERROR: $*" >&2
   exit 1
-fi
+}
 
-# Clean bucket name (strip leading gs:// and trailing /)
-GCS_BUCKET="${GCS_BUCKET#gs://}"
-GCS_BUCKET="${GCS_BUCKET%/}"
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
 
-# ------------------------------------------------------------------------------
-# Remote SSH Mode Execution
-# ------------------------------------------------------------------------------
-if [[ "${SSH_MODE}" == "true" ]]; then
+step() {
+  echo "==> $*"
+}
+
+quote() {
+  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+set_default() {
+  local var="$1" value="$2"
+  [[ -n "${!var-}" ]] || printf -v "${var}" '%s' "${value}"
+}
+
+parse_args() {
+  local arg key value
+  for arg in "$@"; do
+    case "${arg}" in
+      --ssh)
+        SSH_MODE=true
+        ;;
+      --help | -h)
+        usage
+        exit 0
+        ;;
+      *=*)
+        key="${arg%%=*}"
+        value="${arg#*=}"
+        export "${key}=${value}"
+        ;;
+      *)
+        [[ -n "${GCS_BUCKET}" ]] || GCS_BUCKET="${arg}"
+        ;;
+    esac
+  done
+}
+
+normalize_config() {
+  local key var value item
+  [[ -n "${GCS_BUCKET}" ]] || die "GCS_BUCKET is required. Example: bash benchmarks/vbench/run_tpu_generation.sh GCS_BUCKET=my-bucket"
+
+  GCS_BUCKET="${GCS_BUCKET#gs://}"
+  GCS_BUCKET="${GCS_BUCKET%/}"
+  set_default CONFIG_FILE "src/maxdiffusion/configs/base_wan_27b.yml"
+  set_default FLASH_BLOCK_SIZES "${DEFAULT_FLASH_BLOCK_SIZES}"
+  set_default SEED "12345"
+  set_default SEEDS "${SEED}"
+  set_default TPU_NAME "jalwaniya-v6e-8"
+  set_default TPU_ZONE "southamerica-west1-a"
+  set_default TPU_PROJECT "tpu-prod-env-one-vm"
+  set_default GIT_REPO "https://github.com/jitendra-jalwaniya/maxdiffusion.git"
+  set_default GIT_BRANCH "two_machines"
+  set_default EXTERNAL_DISK "/mnt/disks/external_disk"
+  set_default VENV_DIR "${HOME}/maxdiffusion_venv"
+
+  for item in "${WAN_OVERRIDES[@]}"; do
+    IFS='|' read -r key var value <<< "${item}"
+    set_default "${var}" "${value}"
+  done
+
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if [[ -n "${MAXDIFFUSION_ROOT:-}" ]]; then
+    REPO_ROOT="$(cd "${MAXDIFFUSION_ROOT}" && pwd)"
+  else
+    REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+  fi
+}
+
+absolute_file() {
+  local path="$1" dir base
+  [[ -f "${path}" ]] || die "File not found: ${path}"
+  dir="$(cd "$(dirname "${path}")" && pwd)"
+  base="$(basename "${path}")"
+  printf '%s/%s\n' "${dir}" "${base}"
+}
+
+print_config() {
   echo "=========================================================================="
-  echo "Executing VBench generation on TPU VM remotely via SSH"
+  echo "Starting VBench video generation on TPU VM"
+  echo "  Run Name:    ${RUN_NAME}"
+  echo "  GCS Bucket:  gs://${GCS_BUCKET}"
+  echo "  Prompt File: ${PROMPT_FILE}"
+  echo "  Config File: ${CONFIG_FILE}"
+  echo "  Seeds:       ${SEEDS}"
+  echo "  Repo Root:   ${REPO_ROOT}"
+  echo "=========================================================================="
+}
+
+emit_remote_arg() {
+  local var="$1"
+  printf '  %s\n' "$(quote "${var}=${!var-}")"
+}
+
+emit_remote_args() {
+  local item key var value
+  for var in GCS_BUCKET SEED SEEDS CONFIG_FILE HF_HOME TMPDIR EXTERNAL_DISK VENV_DIR; do
+    emit_remote_arg "${var}"
+  done
+  for item in "${WAN_OVERRIDES[@]}"; do
+    IFS='|' read -r key var value <<< "${item}"
+    emit_remote_arg "${var}"
+  done
+}
+
+run_over_ssh() {
+  local source_script remote_script remote_dir_label remote_dir_assignment remote_command
+  local gcloud_args=("--zone=${TPU_ZONE}")
+  [[ -n "${TPU_PROJECT}" ]] && gcloud_args+=("--project=${TPU_PROJECT}")
+
+  source_script="$(absolute_file "${BASH_SOURCE[0]}")"
+  remote_script="/tmp/run_tpu_generation_${USER:-user}_$$.sh"
+  remote_dir_label="${REMOTE_DIR:-\$HOME/maxdiffusion}"
+  if [[ -n "${REMOTE_DIR:-}" ]]; then
+    remote_dir_assignment="remote_dir=$(quote "${REMOTE_DIR}")"
+  else
+    remote_dir_assignment='remote_dir="${HOME}/maxdiffusion"'
+  fi
+
+  echo "=========================================================================="
+  echo "Executing VBench generation remotely"
   echo "  TPU Name:    ${TPU_NAME}"
   echo "  TPU Zone:    ${TPU_ZONE}"
   echo "  TPU Project: ${TPU_PROJECT}"
+  echo "  Remote Dir:  ${remote_dir_label}"
   echo "  GCS Bucket:  gs://${GCS_BUCKET}"
   echo "=========================================================================="
 
-  REMOTE_SCRIPT=$(cat <<EOF
+  gcloud compute tpus tpu-vm scp "${source_script}" "${TPU_NAME}:${remote_script}" "${gcloud_args[@]}"
+
+  remote_command=$(cat <<EOF
 set -euo pipefail
+${remote_dir_assignment}
+git_repo=$(quote "${GIT_REPO}")
+git_branch=$(quote "${GIT_BRANCH}")
 
-# Configure HuggingFace cache and temp directory on TPU VM
-if [ -n "${HF_HOME_OVERRIDE}" ]; then
-  export HF_HOME="${HF_HOME_OVERRIDE}"
-elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
-  export HF_HOME="/mnt/disks/external_disk/hf_cache"
-else
-  export HF_HOME="\$HOME/hf_cache"
+echo "==> [TPU VM] Syncing MaxDiffusion at \${remote_dir}..."
+if [[ ! -d "\${remote_dir}/.git" ]]; then
+  mkdir -p "\$(dirname "\${remote_dir}")"
+  git clone "\${git_repo}" "\${remote_dir}"
 fi
+cd "\${remote_dir}"
+git fetch origin "\${git_branch}" || true
+git checkout "\${git_branch}" || true
+git pull origin "\${git_branch}" || true
 
-if [ -n "${TMPDIR_OVERRIDE}" ]; then
-  export TMPDIR="${TMPDIR_OVERRIDE}"
-elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
-  export TMPDIR="/mnt/disks/external_disk/tmp"
-else
-  export TMPDIR="/tmp"
-fi
-
-mkdir -p "\${HF_HOME}" "\${TMPDIR}"
-
-REMOTE_DIR="${REMOTE_DIR_OVERRIDE:-\$HOME/maxdiffusion}"
-echo "==> [TPU VM] Ensuring MaxDiffusion repository is set up at \${REMOTE_DIR}..."
-if [ ! -d "\${REMOTE_DIR}" ]; then
-  mkdir -p "\$(dirname "\${REMOTE_DIR}")"
-  git clone "${GIT_REPO}" "\${REMOTE_DIR}"
-fi
-
-cd "\${REMOTE_DIR}"
-git checkout "${GIT_BRANCH}" || true
-git pull origin "${GIT_BRANCH}" || true
-
-echo "==> [TPU VM] Running dependency setup..."
-export PATH="\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH"
-if ! python3 -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then
-  echo "Setting up Python 3.12 virtualenv..."
-  if ! command -v uv >/dev/null 2>&1 && ! python3 -m uv --version >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || python3 -m pip install --upgrade uv 2>/dev/null || python3 -m pip install --user --upgrade uv 2>/dev/null || true
-    export PATH="\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH"
-  fi
-  if [ ! -d "\$HOME/maxdiffusion_venv" ]; then
-    python3 -m uv venv "\$HOME/maxdiffusion_venv" --python 3.12 --seed 2>/dev/null || uv venv "\$HOME/maxdiffusion_venv" --python 3.12 --seed
-  fi
-  source "\$HOME/maxdiffusion_venv/bin/activate"
-fi
-
-if [ -f "\$HOME/maxdiffusion_venv/bin/activate" ]; then
-  source "\$HOME/maxdiffusion_venv/bin/activate"
-fi
-
-bash setup.sh MODE=stable DEVICE=tpu
-python3 -m uv pip install -e . || uv pip install -e . || pip install -e .
-
-echo "==> [TPU VM] Launching WAN 2.2 27B video generation for seed(s): ${SEEDS}..."
-for current_seed in ${SEEDS}; do
-  echo "==> [TPU VM] Running inference with seed: \${current_seed}..."
-  python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}" \\
-    run_name="${RUN_NAME}" \\
-    seed="\${current_seed}" \\
-    attention="${ATTENTION}" \\
-    num_inference_steps="${NUM_STEPS}" \\
-    num_frames="${NUM_FRAMES}" \\
-    width="${WIDTH}" \\
-    height="${HEIGHT}" \\
-    per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \\
-    vae_spatial="${VAE_SPATIAL}" \\
-    vae_decode_chunk="${VAE_DECODE_CHUNK}" \\
-    vae_weights_dtype="${VAE_WEIGHTS_DTYPE}" \\
-    vae_dtype="${VAE_DTYPE}" \\
-    text_encoder_dtype="${TEXT_ENCODER_DTYPE}" \\
-    compile_text_encoder="${COMPILE_TEXT_ENCODER}" \\
-    ici_data_parallelism="${ICI_DATA_PARALLELISM}" \\
-    ici_context_parallelism="${ICI_CONTEXT_PARALLELISM}" \\
-    fps="${FPS}" \\
-    use_kv_cache="${USE_KV_CACHE}" \\
-    use_base2_exp="${USE_BASE2_EXP}" \\
-    use_experimental_scheduler="${USE_EXPERIMENTAL_SCHEDULER}" \\
-    use_batched_text_encoder="${USE_BATCHED_TEXT_ENCODER}" \\
-    flash_block_sizes='${FLASH_BLOCK_SIZES}' \\
-    prompt_file="${PROMPT_FILE}" \\
-    base_output_directory="gs://${GCS_BUCKET}"
-done
-
-echo "==> [TPU VM] Syncing benchmark metadata to GCS bucket..."
-python3 - <<PYEOF
-import glob
-import os
-from maxdiffusion.max_utils import upload_file_to_gcs
-
-gcs_target = "gs://${GCS_BUCKET}/${RUN_NAME}"
-for json_file in sorted(glob.glob("./benchmarks/vbench/VBench_full_info_sub*.json")):
-  upload_file_to_gcs(gcs_target, json_file)
-PYEOF
-
-echo "==> [TPU VM] Video generation completed successfully!"
+args=(
+$(emit_remote_args)
+  "MAXDIFFUSION_ROOT=\${remote_dir}"
+)
+bash $(quote "${remote_script}") "\${args[@]}"
 EOF
 )
 
-  # Execute via gcloud compute tpus tpu-vm ssh
-  gcloud compute tpus tpu-vm ssh "${TPU_NAME}" \
-    --zone="${TPU_ZONE}" \
-    --project="${TPU_PROJECT}" \
-    --command="${REMOTE_SCRIPT}"
+  gcloud compute tpus tpu-vm ssh "${TPU_NAME}" "${gcloud_args[@]}" --command="${remote_command}"
+}
+
+configure_cache_dirs() {
+  if [[ -z "${HF_HOME:-}" ]]; then
+    [[ -d "${EXTERNAL_DISK}" && -w "${EXTERNAL_DISK}" ]] && HF_HOME="${EXTERNAL_DISK}/hf_cache" || HF_HOME="${HOME}/hf_cache"
+  fi
+  if [[ -z "${TMPDIR:-}" ]]; then
+    [[ -d "${EXTERNAL_DISK}" && -w "${EXTERNAL_DISK}" ]] && TMPDIR="${EXTERNAL_DISK}/tmp" || TMPDIR="/tmp"
+  fi
+  export HF_HOME TMPDIR
+  mkdir -p "${HF_HOME}" "${TMPDIR}"
+}
+
+python_supports_wan() {
+  "$1" -c 'import sys; assert sys.version_info >= (3, 12)' >/dev/null 2>&1
+}
+
+create_python_env() {
+  export PATH="${HOME}/.cargo/bin:${HOME}/.local/bin:${PATH}"
+  if [[ -x "${VENV_DIR}/bin/python3" ]] && python_supports_wan "${VENV_DIR}/bin/python3"; then
+    # shellcheck disable=SC1091
+    source "${VENV_DIR}/bin/activate"
+    return
+  fi
+  python_supports_wan python3 && return
+
+  step "Creating Python 3.12 virtualenv..."
+  have uv || python3 -m pip install --user --upgrade uv 2>/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
+  [[ ! -d "${VENV_DIR}" ]] || rm -rf "${VENV_DIR}"
+  python3 -m uv venv "${VENV_DIR}" --python 3.12 --seed || uv venv "${VENV_DIR}" --python 3.12 --seed
+  # shellcheck disable=SC1091
+  source "${VENV_DIR}/bin/activate"
+}
+
+install_dependencies() {
+  step "Installing MaxDiffusion TPU dependencies..."
+  bash setup.sh MODE=stable DEVICE=tpu
+  python3 -m uv pip install -e . || uv pip install -e . || python3 -m pip install -e .
+}
+
+run_generation() {
+  local current_seed item key var value
+  local -a seed_list args
+  read -r -a seed_list <<< "${SEEDS}"
+  [[ ${#seed_list[@]} -gt 0 ]] || die "No seeds found. Pass SEED=<seed> or SEEDS=\"<seed1> <seed2>\"."
+
+  step "Running WAN 2.2 27B inference for seed(s): ${SEEDS}..."
+  for current_seed in "${seed_list[@]}"; do
+    echo "==> Running inference with seed: ${current_seed}..."
+    args=(python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}")
+    for item in "${WAN_OVERRIDES[@]}"; do
+      IFS='|' read -r key var value <<< "${item}"
+      args+=("${key}=${!var}")
+    done
+    args+=("seed=${current_seed}" "base_output_directory=gs://${GCS_BUCKET}")
+    "${args[@]}"
+  done
+}
+
+sync_metadata() {
+  step "Syncing benchmark metadata to GCS..."
+  python3 - <<PY
+import glob
+from maxdiffusion.max_utils import upload_file_to_gcs
+
+for json_file in sorted(glob.glob("./benchmarks/vbench/VBench_full_info_sub*.json")):
+  upload_file_to_gcs("gs://${GCS_BUCKET}/${RUN_NAME}", json_file)
+PY
+}
+
+run_local() {
+  print_config
+  cd "${REPO_ROOT}"
+  configure_cache_dirs
+  create_python_env
+  install_dependencies
+  run_generation
+  sync_metadata
 
   echo ""
   echo "=========================================================================="
   echo "TPU video generation complete!"
   echo "Generated videos saved to: gs://${GCS_BUCKET}/${RUN_NAME}/videos/"
   echo ""
-  echo "Next Step: SSH into your GPU VM and run benchmarks/vbench/run_gpu_eval.sh:"
+  echo "Next Step: run benchmarks/vbench/run_gpu_eval.sh on your GPU VM:"
   echo "  bash benchmarks/vbench/run_gpu_eval.sh GCS_BUCKET=${GCS_BUCKET} RUN_NAME=${RUN_NAME}"
   echo "=========================================================================="
-  exit 0
-fi
+}
 
-# ------------------------------------------------------------------------------
-# Local TPU VM Execution
-# ------------------------------------------------------------------------------
-echo "=========================================================================="
-echo "Starting VBench video generation on TPU VM (Local Execution)"
-echo "  Run Name:    ${RUN_NAME}"
-echo "  GCS Bucket:  gs://${GCS_BUCKET}"
-echo "  Prompt File: ${PROMPT_FILE}"
-echo "  Config File: ${CONFIG_FILE}"
-echo "=========================================================================="
+parse_args "$@"
+normalize_config
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-cd "${REPO_ROOT}"
-
-# Ensure HuggingFace cache and temp files are configured
-if [ -n "${HF_HOME_OVERRIDE}" ]; then
-  export HF_HOME="${HF_HOME_OVERRIDE}"
-elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
-  export HF_HOME="/mnt/disks/external_disk/hf_cache"
+if [[ "${SSH_MODE}" == "true" ]]; then
+  run_over_ssh
 else
-  export HF_HOME="${HOME}/hf_cache"
+  run_local
 fi
-
-if [ -n "${TMPDIR_OVERRIDE}" ]; then
-  export TMPDIR="${TMPDIR_OVERRIDE}"
-elif [ -d "/mnt/disks/external_disk" ] && [ -w "/mnt/disks/external_disk" ]; then
-  export TMPDIR="/mnt/disks/external_disk/tmp"
-else
-  export TMPDIR="${TMPDIR:-/tmp}"
-fi
-
-mkdir -p "${HF_HOME}" "${TMPDIR}"
-
-# 1. Environment Setup
-echo "==> Step 1/3: Verifying Python environment and dependencies..."
-export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-if ! python3 -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then
-  echo "Creating Python 3.12 virtualenv..."
-  if ! command -v uv >/dev/null 2>&1 && ! python3 -m uv --version >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || python3 -m pip install --upgrade uv 2>/dev/null || python3 -m pip install --user --upgrade uv 2>/dev/null || true
-    export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
-  fi
-  if [ ! -d "$HOME/maxdiffusion_venv" ]; then
-    python3 -m uv venv "$HOME/maxdiffusion_venv" --python 3.12 --seed 2>/dev/null || uv venv "$HOME/maxdiffusion_venv" --python 3.12 --seed
-  fi
-  source "$HOME/maxdiffusion_venv/bin/activate"
-fi
-
-if [ -f "$HOME/maxdiffusion_venv/bin/activate" ]; then
-  source "$HOME/maxdiffusion_venv/bin/activate"
-fi
-
-bash setup.sh MODE=stable DEVICE=tpu
-python3 -m uv pip install -e . || uv pip install -e . || pip install -e .
-
-# 2. Run Video Generation Command
-echo "==> Step 2/3: Running WAN 2.2 27B inference on VBench prompts for seed(s): ${SEEDS}..."
-for current_seed in ${SEEDS}; do
-  echo "==> Running inference with seed: ${current_seed}..."
-  python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}" \
-    run_name="${RUN_NAME}" \
-    seed="${current_seed}" \
-    attention="${ATTENTION}" \
-    num_inference_steps="${NUM_STEPS}" \
-    num_frames="${NUM_FRAMES}" \
-    width="${WIDTH}" \
-    height="${HEIGHT}" \
-    per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \
-    vae_spatial="${VAE_SPATIAL}" \
-    vae_decode_chunk="${VAE_DECODE_CHUNK}" \
-    vae_weights_dtype="${VAE_WEIGHTS_DTYPE}" \
-    vae_dtype="${VAE_DTYPE}" \
-    text_encoder_dtype="${TEXT_ENCODER_DTYPE}" \
-    compile_text_encoder="${COMPILE_TEXT_ENCODER}" \
-    ici_data_parallelism="${ICI_DATA_PARALLELISM}" \
-    ici_context_parallelism="${ICI_CONTEXT_PARALLELISM}" \
-    fps="${FPS}" \
-    use_kv_cache="${USE_KV_CACHE}" \
-    use_base2_exp="${USE_BASE2_EXP}" \
-    use_experimental_scheduler="${USE_EXPERIMENTAL_SCHEDULER}" \
-    use_batched_text_encoder="${USE_BATCHED_TEXT_ENCODER}" \
-    flash_block_sizes="${FLASH_BLOCK_SIZES}" \
-    prompt_file="${PROMPT_FILE}" \
-    base_output_directory="gs://${GCS_BUCKET}"
-done
-
-# 3. Post-run benchmark metadata upload
-echo "==> Step 3/3: Syncing benchmark metadata to GCS..."
-python3 - <<PYEOF
-import glob
-import os
-from maxdiffusion.max_utils import upload_file_to_gcs
-
-gcs_target = "gs://${GCS_BUCKET}/${RUN_NAME}"
-for json_file in sorted(glob.glob("./benchmarks/vbench/VBench_full_info_sub*.json")):
-  upload_file_to_gcs(gcs_target, json_file)
-PYEOF
-
-echo ""
-echo "=========================================================================="
-echo "TPU video generation complete!"
-echo "Generated videos saved to: gs://${GCS_BUCKET}/${RUN_NAME}/videos/"
-echo ""
-echo "Next Step: SSH into your GPU VM and run benchmarks/vbench/run_gpu_eval.sh:"
-echo "  bash benchmarks/vbench/run_gpu_eval.sh GCS_BUCKET=${GCS_BUCKET} RUN_NAME=${RUN_NAME}"
-echo "=========================================================================="
