@@ -38,6 +38,7 @@ set -euo pipefail
 GCS_BUCKET="${GCS_BUCKET:-}"
 RUN_NAME="${RUN_NAME:-wan-inference}"
 SEED="${SEED:-12345}"
+SEEDS="${SEEDS:-${SEED}}"
 PROMPT_FILE="${PROMPT_FILE:-./benchmarks/vbench/prompts_3.txt}"
 CONFIG_FILE="${CONFIG_FILE:-src/maxdiffusion/configs/base_wan_27b.yml}"
 ATTENTION="${ATTENTION:-ulysses_custom}"
@@ -93,6 +94,8 @@ for arg in "$@"; do
       echo "  TPU_ZONE           TPU VM zone (for SSH mode)"
       echo "  TPU_PROJECT        GCP project of the TPU VM"
       echo "  PROMPT_FILE        Path to prompt file (default: ./benchmarks/vbench/prompts_3.txt)"
+      echo "  SEED               Random seed for generation (default: 12345)"
+      echo "  SEEDS              Space-separated seeds for multi-sample generation (e.g. \"12345 12346 12347 12348 12349\")"
       echo "  HF_HOME            HuggingFace cache directory (optional override)"
       echo "  TMPDIR             Temporary files directory (optional override)"
       echo "  REMOTE_DIR         MaxDiffusion repo path on TPU VM (default: \$HOME/maxdiffusion)"
@@ -195,45 +198,46 @@ fi
 bash setup.sh MODE=stable DEVICE=tpu
 python3 -m uv pip install -e .
 
-echo "==> [TPU VM] Launching WAN 2.2 27B video generation..."
-python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}" \\
-  run_name="${RUN_NAME}" \\
-  seed="${SEED}" \\
-  attention="${ATTENTION}" \\
-  num_inference_steps="${NUM_STEPS}" \\
-  num_frames="${NUM_FRAMES}" \\
-  width="${WIDTH}" \\
-  height="${HEIGHT}" \\
-  per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \\
-  vae_spatial="${VAE_SPATIAL}" \\
-  vae_decode_chunk="${VAE_DECODE_CHUNK}" \\
-  vae_weights_dtype="${VAE_WEIGHTS_DTYPE}" \\
-  vae_dtype="${VAE_DTYPE}" \\
-  text_encoder_dtype="${TEXT_ENCODER_DTYPE}" \\
-  compile_text_encoder="${COMPILE_TEXT_ENCODER}" \\
-  ici_data_parallelism="${ICI_DATA_PARALLELISM}" \\
-  ici_context_parallelism="${ICI_CONTEXT_PARALLELISM}" \\
-  fps="${FPS}" \\
-  use_kv_cache="${USE_KV_CACHE}" \\
-  use_base2_exp="${USE_BASE2_EXP}" \\
-  use_experimental_scheduler="${USE_EXPERIMENTAL_SCHEDULER}" \\
-  use_batched_text_encoder="${USE_BATCHED_TEXT_ENCODER}" \\
-  flash_block_sizes='${FLASH_BLOCK_SIZES}' \\
-  prompt_file="${PROMPT_FILE}" \\
-  base_output_directory="gs://${GCS_BUCKET}"
+echo "==> [TPU VM] Launching WAN 2.2 27B video generation for seed(s): ${SEEDS}..."
+for current_seed in ${SEEDS}; do
+  echo "==> [TPU VM] Running inference with seed: \${current_seed}..."
+  python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}" \\
+    run_name="${RUN_NAME}" \\
+    seed="\${current_seed}" \\
+    attention="${ATTENTION}" \\
+    num_inference_steps="${NUM_STEPS}" \\
+    num_frames="${NUM_FRAMES}" \\
+    width="${WIDTH}" \\
+    height="${HEIGHT}" \\
+    per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \\
+    vae_spatial="${VAE_SPATIAL}" \\
+    vae_decode_chunk="${VAE_DECODE_CHUNK}" \\
+    vae_weights_dtype="${VAE_WEIGHTS_DTYPE}" \\
+    vae_dtype="${VAE_DTYPE}" \\
+    text_encoder_dtype="${TEXT_ENCODER_DTYPE}" \\
+    compile_text_encoder="${COMPILE_TEXT_ENCODER}" \\
+    ici_data_parallelism="${ICI_DATA_PARALLELISM}" \\
+    ici_context_parallelism="${ICI_CONTEXT_PARALLELISM}" \\
+    fps="${FPS}" \\
+    use_kv_cache="${USE_KV_CACHE}" \\
+    use_base2_exp="${USE_BASE2_EXP}" \\
+    use_experimental_scheduler="${USE_EXPERIMENTAL_SCHEDULER}" \\
+    use_batched_text_encoder="${USE_BATCHED_TEXT_ENCODER}" \\
+    flash_block_sizes='${FLASH_BLOCK_SIZES}' \\
+    prompt_file="${PROMPT_FILE}" \\
+    base_output_directory="gs://${GCS_BUCKET}"
+done
 
-echo "==> [TPU VM] Syncing any remaining generated files to GCS bucket..."
-if ls wan_output_*.mp4 1> /dev/null 2>&1; then
-  gcloud storage cp wan_output_*.mp4 "gs://${GCS_BUCKET}/${RUN_NAME}/videos/" || gsutil -m cp wan_output_*.mp4 "gs://${GCS_BUCKET}/${RUN_NAME}/videos/" || true
-fi
+echo "==> [TPU VM] Syncing benchmark metadata to GCS bucket..."
+python3 - <<PYEOF
+import glob
+import os
+from maxdiffusion.max_utils import upload_file_to_gcs
 
-# Upload benchmark metadata for GPU eval step
-if [ -f "${PROMPT_FILE}" ]; then
-  gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
-fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
-fi
+gcs_target = "gs://${GCS_BUCKET}/${RUN_NAME}"
+for json_file in sorted(glob.glob("./benchmarks/vbench/VBench_full_info_sub*.json")):
+  upload_file_to_gcs(gcs_target, json_file)
+PYEOF
 
 echo "==> [TPU VM] Video generation completed successfully!"
 EOF
@@ -309,47 +313,47 @@ bash setup.sh MODE=stable DEVICE=tpu
 python3 -m uv pip install -e .
 
 # 2. Run Video Generation Command
-echo "==> Step 2/3: Running WAN 2.2 27B inference on VBench prompts..."
-python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}" \
-  run_name="${RUN_NAME}" \
-  seed="${SEED}" \
-  attention="${ATTENTION}" \
-  num_inference_steps="${NUM_STEPS}" \
-  num_frames="${NUM_FRAMES}" \
-  width="${WIDTH}" \
-  height="${HEIGHT}" \
-  per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \
-  vae_spatial="${VAE_SPATIAL}" \
-  vae_decode_chunk="${VAE_DECODE_CHUNK}" \
-  vae_weights_dtype="${VAE_WEIGHTS_DTYPE}" \
-  vae_dtype="${VAE_DTYPE}" \
-  text_encoder_dtype="${TEXT_ENCODER_DTYPE}" \
-  compile_text_encoder="${COMPILE_TEXT_ENCODER}" \
-  ici_data_parallelism="${ICI_DATA_PARALLELISM}" \
-  ici_context_parallelism="${ICI_CONTEXT_PARALLELISM}" \
-  fps="${FPS}" \
-  use_kv_cache="${USE_KV_CACHE}" \
-  use_base2_exp="${USE_BASE2_EXP}" \
-  use_experimental_scheduler="${USE_EXPERIMENTAL_SCHEDULER}" \
-  use_batched_text_encoder="${USE_BATCHED_TEXT_ENCODER}" \
-  flash_block_sizes="${FLASH_BLOCK_SIZES}" \
-  prompt_file="${PROMPT_FILE}" \
-  base_output_directory="gs://${GCS_BUCKET}"
+echo "==> Step 2/3: Running WAN 2.2 27B inference on VBench prompts for seed(s): ${SEEDS}..."
+for current_seed in ${SEEDS}; do
+  echo "==> Running inference with seed: ${current_seed}..."
+  python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}" \
+    run_name="${RUN_NAME}" \
+    seed="${current_seed}" \
+    attention="${ATTENTION}" \
+    num_inference_steps="${NUM_STEPS}" \
+    num_frames="${NUM_FRAMES}" \
+    width="${WIDTH}" \
+    height="${HEIGHT}" \
+    per_device_batch_size="${PER_DEVICE_BATCH_SIZE}" \
+    vae_spatial="${VAE_SPATIAL}" \
+    vae_decode_chunk="${VAE_DECODE_CHUNK}" \
+    vae_weights_dtype="${VAE_WEIGHTS_DTYPE}" \
+    vae_dtype="${VAE_DTYPE}" \
+    text_encoder_dtype="${TEXT_ENCODER_DTYPE}" \
+    compile_text_encoder="${COMPILE_TEXT_ENCODER}" \
+    ici_data_parallelism="${ICI_DATA_PARALLELISM}" \
+    ici_context_parallelism="${ICI_CONTEXT_PARALLELISM}" \
+    fps="${FPS}" \
+    use_kv_cache="${USE_KV_CACHE}" \
+    use_base2_exp="${USE_BASE2_EXP}" \
+    use_experimental_scheduler="${USE_EXPERIMENTAL_SCHEDULER}" \
+    use_batched_text_encoder="${USE_BATCHED_TEXT_ENCODER}" \
+    flash_block_sizes="${FLASH_BLOCK_SIZES}" \
+    prompt_file="${PROMPT_FILE}" \
+    base_output_directory="gs://${GCS_BUCKET}"
+done
 
-# 3. Post-run verification & backup upload
-echo "==> Step 3/3: Verifying and syncing video outputs to GCS..."
-if ls wan_output_*.mp4 1> /dev/null 2>&1; then
-  echo "Syncing any remaining local videos to GCS: gs://${GCS_BUCKET}/${RUN_NAME}/videos/"
-  gcloud storage cp wan_output_*.mp4 "gs://${GCS_BUCKET}/${RUN_NAME}/videos/" || gsutil -m cp wan_output_*.mp4 "gs://${GCS_BUCKET}/${RUN_NAME}/videos/" || true
-fi
+# 3. Post-run benchmark metadata upload
+echo "==> Step 3/3: Syncing benchmark metadata to GCS..."
+python3 - <<PYEOF
+import glob
+import os
+from maxdiffusion.max_utils import upload_file_to_gcs
 
-# Upload benchmark metadata for GPU eval step
-if [ -f "${PROMPT_FILE}" ]; then
-  gcloud storage cp "${PROMPT_FILE}" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
-fi
-if [ -f "./benchmarks/vbench/VBench_full_info_sub3.json" ]; then
-  gcloud storage cp "./benchmarks/vbench/VBench_full_info_sub3.json" "gs://${GCS_BUCKET}/${RUN_NAME}/" || true
-fi
+gcs_target = "gs://${GCS_BUCKET}/${RUN_NAME}"
+for json_file in sorted(glob.glob("./benchmarks/vbench/VBench_full_info_sub*.json")):
+  upload_file_to_gcs(gcs_target, json_file)
+PYEOF
 
 echo ""
 echo "=========================================================================="
