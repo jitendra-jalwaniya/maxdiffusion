@@ -182,11 +182,15 @@ git checkout "${GIT_BRANCH}" || true
 git pull origin "${GIT_BRANCH}" || true
 
 echo "==> [TPU VM] Running dependency setup..."
+export PATH="\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH"
 if ! python3 -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then
   echo "Setting up Python 3.12 virtualenv..."
-  python3 -m pip install --upgrade uv || true
+  if ! command -v uv >/dev/null 2>&1 && ! python3 -m uv --version >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || python3 -m pip install --upgrade uv 2>/dev/null || python3 -m pip install --user --upgrade uv 2>/dev/null || true
+    export PATH="\$HOME/.cargo/bin:\$HOME/.local/bin:\$PATH"
+  fi
   if [ ! -d "\$HOME/maxdiffusion_venv" ]; then
-    uv venv "\$HOME/maxdiffusion_venv" --python 3.12 --seed
+    python3 -m uv venv "\$HOME/maxdiffusion_venv" --python 3.12 --seed 2>/dev/null || uv venv "\$HOME/maxdiffusion_venv" --python 3.12 --seed
   fi
   source "\$HOME/maxdiffusion_venv/bin/activate"
 fi
@@ -196,7 +200,7 @@ if [ -f "\$HOME/maxdiffusion_venv/bin/activate" ]; then
 fi
 
 bash setup.sh MODE=stable DEVICE=tpu
-python3 -m uv pip install -e .
+python3 -m uv pip install -e . || uv pip install -e . || pip install -e .
 
 echo "==> [TPU VM] Launching WAN 2.2 27B video generation for seed(s): ${SEEDS}..."
 for current_seed in ${SEEDS}; do
@@ -296,11 +300,15 @@ mkdir -p "${HF_HOME}" "${TMPDIR}"
 
 # 1. Environment Setup
 echo "==> Step 1/3: Verifying Python environment and dependencies..."
+export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 if ! python3 -c 'import sys; assert sys.version_info >= (3, 12)' 2>/dev/null; then
   echo "Creating Python 3.12 virtualenv..."
-  python3 -m pip install --upgrade uv || true
+  if ! command -v uv >/dev/null 2>&1 && ! python3 -m uv --version >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh 2>/dev/null || python3 -m pip install --upgrade uv 2>/dev/null || python3 -m pip install --user --upgrade uv 2>/dev/null || true
+    export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
+  fi
   if [ ! -d "$HOME/maxdiffusion_venv" ]; then
-    uv venv "$HOME/maxdiffusion_venv" --python 3.12 --seed
+    python3 -m uv venv "$HOME/maxdiffusion_venv" --python 3.12 --seed 2>/dev/null || uv venv "$HOME/maxdiffusion_venv" --python 3.12 --seed
   fi
   source "$HOME/maxdiffusion_venv/bin/activate"
 fi
@@ -310,7 +318,7 @@ if [ -f "$HOME/maxdiffusion_venv/bin/activate" ]; then
 fi
 
 bash setup.sh MODE=stable DEVICE=tpu
-python3 -m uv pip install -e .
+python3 -m uv pip install -e . || uv pip install -e . || pip install -e .
 
 # 2. Run Video Generation Command
 echo "==> Step 2/3: Running WAN 2.2 27B inference on VBench prompts for seed(s): ${SEEDS}..."
