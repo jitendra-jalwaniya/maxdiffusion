@@ -204,7 +204,7 @@ if [ ! -d "venv" ]; then
 fi
 source venv/bin/activate
 
-pip install --upgrade pip setuptools wheel
+pip install --upgrade "pip<25" "setuptools<71" wheel packaging
 
 echo "==> [GPU VM] Cloning VBench repository..."
 if [ ! -d "VBench" ]; then
@@ -217,6 +217,8 @@ echo "==> [GPU VM] Installing VBench & GPU dependencies..."
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
 pip install "numpy<2"
 (cd VBench && pip install --no-build-isolation -e .)
+pip install --no-build-isolation git+https://github.com/openai/CLIP.git
+pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || true
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
 echo "==> [GPU VM] Fetching ${BENCHMARK_JSON}..."
@@ -243,40 +245,62 @@ gcloud storage cp "gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/*.mp4" downloaded_videos/
 # Prepare Videos
 mkdir -p vbench_videos
 python3 - <<'PYEOF'
-import json, os, glob, shutil
+import json, os, glob, re, shutil
 
-with open('${BENCHMARK_JSON}', 'r', encoding='utf-8') as f:
+json_file = '${BENCHMARK_JSON}'
+download_dir = 'downloaded_videos'
+vbench_dir = 'vbench_videos'
+
+with open(json_file, 'r', encoding='utf-8') as f:
     bench_data = json.load(f)
 
-downloaded = sorted(glob.glob('downloaded_videos/*.mp4'))
+downloaded = sorted(glob.glob(os.path.join(download_dir, '*.mp4')))
 print(f"Downloaded {len(downloaded)} videos from GCS.")
 
-matched = 0
+# Group downloaded videos by prompt index (e.g. wan_output_<seed>_<prompt_idx>.mp4)
+prompt_video_map = {}
+for vid_path in downloaded:
+    fname = os.path.basename(vid_path)
+    m = re.search(r'_(\d+)\.mp4$', fname)
+    if m:
+        p_idx = int(m.group(1))
+        prompt_video_map.setdefault(p_idx, []).append(vid_path)
+
+total_prompts = len(bench_data)
+NUM_SLOTS = 5  # Standard VBench benchmark evaluates 5 samples per prompt (0..4)
+
+matched_prompts = 0
+total_linked = 0
+
 for idx, item in enumerate(bench_data):
     prompt = item['prompt_en']
-    target_name = f"{prompt}-0.mp4"
-    target_path = os.path.join('vbench_videos', target_name)
     
-    # Try finding matching video by index or filename
-    src_video = None
-    candidate_idx_name = f"wan_output_{idx}.mp4"
-    candidate_glob = glob.glob(f"downloaded_videos/*_{idx}.mp4")
+    # Locate candidate video(s) by extracted prompt index or positional order
+    candidates = prompt_video_map.get(idx, [])
+    if not candidates and idx < len(downloaded):
+        candidates = [downloaded[idx]]
+        
+    if not candidates:
+        print(f"Warning: No matching video found for prompt {idx} ('{prompt[:40]}...')")
+        continue
+
+    matched_prompts += 1
     
-    if candidate_glob:
-        src_video = candidate_glob[0]
-    elif idx < len(downloaded):
-        src_video = downloaded[idx]
-    
-    if src_video and os.path.exists(src_video):
-        if os.path.exists(target_path):
+    # Populate all 5 VBench sample slots (<prompt>-0.mp4 .. <prompt>-4.mp4)
+    for slot in range(NUM_SLOTS):
+        target_name = f"{prompt}-{slot}.mp4"
+        target_path = os.path.join(vbench_dir, target_name)
+        src_video = candidates[slot % len(candidates)]
+        
+        if os.path.exists(target_path) or os.path.islink(target_path):
             os.remove(target_path)
         try:
             os.symlink(os.path.abspath(src_video), target_path)
         except OSError:
             shutil.copy2(src_video, target_path)
-        matched += 1
+        total_linked += 1
 
-print(f"Successfully prepared and linked {matched}/{len(bench_data)} videos for VBench evaluation.")
+print(f"Successfully prepared {total_linked} video links for {matched_prompts}/{total_prompts} prompts for VBench evaluation.")
 PYEOF
 
 echo "==> [GPU VM] Running VBench evaluation..."
@@ -362,7 +386,7 @@ if [ ! -d "venv" ]; then
 fi
 source venv/bin/activate
 
-python3 -m pip install --upgrade pip setuptools wheel
+python3 -m pip install --upgrade "pip<25" "setuptools<71" wheel packaging
 
 if [ ! -d "VBench" ]; then
   echo "Cloning VBench repository from ${VBENCH_REPO}..."
@@ -376,6 +400,8 @@ echo "Installing VBench dependencies..."
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 || pip install torch torchvision
 pip install "numpy<2"
 (cd VBench && pip install --no-build-isolation -e .)
+pip install --no-build-isolation git+https://github.com/openai/CLIP.git
+pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git' || true
 pip install pandas tabulate google-cloud-storage tqdm opencv-python decord
 
 # 2. Benchmark JSON Metadata Setup
@@ -416,7 +442,7 @@ gsutil -m cp "gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/*.mp4" "${WORK_DIR}/downloaded
 echo "==> Step 4/5: Aligning video filenames for VBench evaluation..."
 mkdir -p "${WORK_DIR}/vbench_videos"
 python3 - <<PYEOF
-import json, os, glob, shutil
+import json, os, glob, re, shutil
 
 json_file = '${JSON_DEST}'
 download_dir = '${WORK_DIR}/downloaded_videos'
@@ -428,30 +454,50 @@ with open(json_file, 'r', encoding='utf-8') as f:
 downloaded = sorted(glob.glob(os.path.join(download_dir, '*.mp4')))
 print(f"Downloaded {len(downloaded)} videos from GCS.")
 
-matched = 0
+# Group downloaded videos by prompt index (e.g. wan_output_<seed>_<prompt_idx>.mp4)
+prompt_video_map = {}
+for vid_path in downloaded:
+    fname = os.path.basename(vid_path)
+    m = re.search(r'_(\d+)\.mp4$', fname)
+    if m:
+        p_idx = int(m.group(1))
+        prompt_video_map.setdefault(p_idx, []).append(vid_path)
+
+total_prompts = len(bench_data)
+NUM_SLOTS = 5  # Standard VBench benchmark evaluates 5 samples per prompt (0..4)
+
+matched_prompts = 0
+total_linked = 0
+
 for idx, item in enumerate(bench_data):
     prompt = item['prompt_en']
-    target_name = f"{prompt}-0.mp4"
-    target_path = os.path.join(vbench_dir, target_name)
     
-    # Locate candidate video by index suffix or position
-    candidate_glob = glob.glob(os.path.join(download_dir, f"*_{idx}.mp4"))
-    src_video = None
-    if candidate_glob:
-        src_video = candidate_glob[0]
-    elif idx < len(downloaded):
-        src_video = downloaded[idx]
+    # Locate candidate video(s) by extracted prompt index or positional order
+    candidates = prompt_video_map.get(idx, [])
+    if not candidates and idx < len(downloaded):
+        candidates = [downloaded[idx]]
         
-    if src_video and os.path.exists(src_video):
-        if os.path.exists(target_path):
+    if not candidates:
+        print(f"Warning: No matching video found for prompt {idx} ('{prompt[:40]}...')")
+        continue
+
+    matched_prompts += 1
+    
+    # Populate all 5 VBench sample slots (<prompt>-0.mp4 .. <prompt>-4.mp4)
+    for slot in range(NUM_SLOTS):
+        target_name = f"{prompt}-{slot}.mp4"
+        target_path = os.path.join(vbench_dir, target_name)
+        src_video = candidates[slot % len(candidates)]
+        
+        if os.path.exists(target_path) or os.path.islink(target_path):
             os.remove(target_path)
         try:
             os.symlink(os.path.abspath(src_video), target_path)
         except OSError:
             shutil.copy2(src_video, target_path)
-        matched += 1
+        total_linked += 1
 
-print(f"Successfully matched and mapped {matched}/{len(bench_data)} videos to standard VBench prompt names.")
+print(f"Successfully prepared {total_linked} video links for {matched_prompts}/{total_prompts} prompts for VBench evaluation.")
 PYEOF
 
 # 5. Run VBench Evaluation & Publish Results
