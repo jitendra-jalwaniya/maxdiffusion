@@ -37,7 +37,7 @@ set -euo pipefail
 # Default Configuration & Parameters
 # ------------------------------------------------------------------------------
 GCS_BUCKET="${GCS_BUCKET:-}"
-RUN_NAME="${RUN_NAME:-wan-inference}"
+RUN_NAME="${RUN_NAME:-wan-inference-aug-31-1}"
 GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-${RUN_NAME}/videos}"
 GCS_RESULTS_DIR="${GCS_RESULTS_DIR:-${RUN_NAME}/vbench_results}"
 WORK_DIR_OVERRIDE=""
@@ -49,25 +49,8 @@ BENCHMARK_JSON="${BENCHMARK_JSON:-VBench_full_info_sub3.json}"
 BENCHMARK_JSON_URL="${BENCHMARK_JSON_URL:-}"
 BENCHMARK_JSON_PATH="${BENCHMARK_JSON_PATH:-}"
 
-# Dimensions to evaluate (defaults to all 16 standard VBench dimensions)
-DIMENSIONS=(
-  "temporal_flickering"
-  "motion_smoothness"
-  "subject_consistency"
-  "background_consistency"
-  "overall_consistency"
-  "aesthetic_quality"
-  "imaging_quality"
-  "color"
-  "object_class"
-  "multiple_objects"
-  "human_action"
-  "spatial_relationship"
-  "scene"
-  "temporal_style"
-  "appearance_style"
-  "dynamic_degree"
-)
+# Dimensions to evaluate (defaults to dimensions specified in the benchmark JSON if not explicitly provided)
+DIMENSIONS=()
 
 # Remote GPU VM details (used if --ssh mode is requested)
 GPU_NAME="${GPU_NAME:-}"
@@ -100,7 +83,7 @@ for arg in "$@"; do
       echo "  GPU_NAME           GPU VM name (for SSH mode)"
       echo "  GPU_ZONE           GPU VM zone (for SSH mode)"
       echo "  GPU_PROJECT        GCP project of the GPU VM"
-      echo "  DIMENSIONS         Space-separated list of dimensions to evaluate (default: all 16)"
+      echo "  DIMENSIONS         Space-separated list of dimensions to evaluate (default: auto-extracted from benchmark JSON)"
       exit 0
       ;;
     WORK_DIR=*)
@@ -158,7 +141,7 @@ if [[ "${SSH_MODE}" == "true" ]]; then
   echo "  Results Dir: gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}"
   echo "=========================================================================="
 
-  DIMS_STR="${DIMENSIONS[*]}"
+  DIMS_STR="${DIMENSIONS[*]:-}"
   REMOTE_SCRIPT=$(cat <<EOF
 set -euo pipefail
 
@@ -306,11 +289,19 @@ PYEOF
 echo "==> [GPU VM] Running VBench evaluation..."
 cd VBench
 mkdir -p "\${WORK_DIR}/evaluation_results"
+if [ -n "${DIMS_STR}" ]; then
+  EVAL_DIMS="${DIMS_STR}"
+else
+  echo "==> [GPU VM] Extracting dimensions from \${WORK_DIR}/${BENCHMARK_JSON}..."
+  EVAL_DIMS=\$(python3 -c "import json; print(' '.join(dict.fromkeys(d for item in json.load(open('\${WORK_DIR}/${BENCHMARK_JSON}')) for d in item.get('dimension', []))))")
+fi
+echo "==> [GPU VM] Evaluating dimensions: \${EVAL_DIMS}"
+
 python3 evaluate.py \
   --videos_path "\${WORK_DIR}/vbench_videos" \
   --full_json_dir "\${WORK_DIR}/${BENCHMARK_JSON}" \
   --output_path "\${WORK_DIR}/evaluation_results" \
-  --dimension ${DIMS_STR} \
+  --dimension \${EVAL_DIMS} \
   --mode vbench_standard
 
 echo "==> [GPU VM] Publishing evaluation results to GCS..."
@@ -341,7 +332,8 @@ echo "  GCS Bucket:      gs://${GCS_BUCKET}"
 echo "  Video Source:    gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}"
 echo "  Results Target:  gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}"
 echo "  Working Dir:     ${WORK_DIR}"
-echo "  Dimensions:      ${DIMENSIONS[*]}"
+echo "  Benchmark JSON:  ${BENCHMARK_JSON}"
+echo "  Dimensions:      ${DIMENSIONS[*]:-(auto-extracted from ${BENCHMARK_JSON})}"
 echo "=========================================================================="
 
 mkdir -p "${WORK_DIR}"
@@ -432,6 +424,13 @@ else
   fi
 fi
 
+# Extract dimensions from benchmark JSON if not explicitly passed
+if [[ ${#DIMENSIONS[@]} -eq 0 ]]; then
+  echo "Extracting dimensions from ${JSON_DEST}..."
+  read -r -a DIMENSIONS <<< "$(python3 -c "import json; print(' '.join(dict.fromkeys(d for item in json.load(open('${JSON_DEST}')) for d in item.get('dimension', []))))")"
+fi
+echo "Dimensions to evaluate: ${DIMENSIONS[*]}"
+
 # 3. Download Generated Videos from GCS
 echo "==> Step 3/5: Downloading generated videos from GCS: gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/..."
 mkdir -p "${WORK_DIR}/downloaded_videos"
@@ -501,7 +500,7 @@ print(f"Successfully prepared {total_linked} video links for {matched_prompts}/{
 PYEOF
 
 # 5. Run VBench Evaluation & Publish Results
-echo "==> Step 5/5: Executing VBench evaluate.py..."
+echo "==> Step 5/5: Executing VBench evaluate.py for dimensions: ${DIMENSIONS[*]}..."
 mkdir -p "${WORK_DIR}/evaluation_results"
 cd "${WORK_DIR}/VBench"
 
