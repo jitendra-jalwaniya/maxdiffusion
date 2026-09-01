@@ -28,6 +28,7 @@ GCS_BUCKET="${GCS_BUCKET:-}"
 SEED="${SEED:-}"
 SEEDS="${SEEDS:-}"
 SSH_MODE=false
+EXPLICIT_ARGS=()
 
 DEFAULT_FLASH_BLOCK_SIZES='{"block_q" : 3328, "block_kv_compute" : 256, "block_kv" : 2816, "block_kv_compute_in" : 256, "block_q_dkv": 3328, "block_kv_dkv" : 2816, "block_kv_dkv_compute" : 256, "block_q_dq" : 3328, "block_kv_dq" : 2816, "heads_per_tile" : 1}'
 
@@ -109,6 +110,26 @@ set_default() {
   [[ -n "${!var-}" ]] || printf -v "${var}" '%s' "${value}"
 }
 
+arg_was_explicit() {
+  local explicit_arg
+  for explicit_arg in "${EXPLICIT_ARGS[@]}"; do
+    [[ "${explicit_arg}" == "$1" ]] && return 0
+  done
+  return 1
+}
+
+path_is_under_external_disk() {
+  local path="${1%/}"
+  [[ "${path}" == "${EXTERNAL_DISK}" || "${path}" == "${EXTERNAL_DISK}/"* ]]
+}
+
+ignore_inherited_path_outside_external_disk() {
+  local var="$1"
+  if [[ -n "${!var-}" ]] && ! arg_was_explicit "${var}" && ! path_is_under_external_disk "${!var}"; then
+    unset "${var}"
+  fi
+}
+
 parse_args() {
   local arg key value
   for arg in "$@"; do
@@ -123,6 +144,7 @@ parse_args() {
       *=*)
         key="${arg%%=*}"
         value="${arg#*=}"
+        EXPLICIT_ARGS+=("${key}")
         export "${key}=${value}"
         ;;
       *)
@@ -149,6 +171,9 @@ normalize_config() {
   set_default GIT_BRANCH "two_machines"
   set_default EXTERNAL_DISK "/mnt/disks/external_disk"
   EXTERNAL_DISK="${EXTERNAL_DISK%/}"
+  for var in HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
+    ignore_inherited_path_outside_external_disk "${var}"
+  done
   set_default HF_CACHE_ROOT "${EXTERNAL_DISK}/hf_cache"
   set_default HF_HOME "${HF_CACHE_ROOT}"
   set_default HF_HUB_CACHE "${HF_HOME}/hub"
