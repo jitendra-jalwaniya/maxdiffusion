@@ -227,11 +227,19 @@ emit_remote_arg() {
   printf '  %s\n' "$(quote "${var}=${!var-}")"
 }
 
+emit_remote_arg_if_explicit() {
+  local var="$1"
+  if arg_was_explicit "${var}"; then
+    emit_remote_arg "${var}"
+  fi
+}
+
 emit_remote_args() {
   local item key var value
-  for var in GCS_BUCKET SEED SEEDS CONFIG_FILE EXTERNAL_DISK HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR VENV_DIR; do
+  for var in GCS_BUCKET SEED SEEDS CONFIG_FILE EXTERNAL_DISK HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
     emit_remote_arg "${var}"
   done
+  emit_remote_arg_if_explicit VENV_DIR
   for item in "${WAN_OVERRIDES[@]}"; do
     IFS='|' read -r key var value <<< "${item}"
     emit_remote_arg "${var}"
