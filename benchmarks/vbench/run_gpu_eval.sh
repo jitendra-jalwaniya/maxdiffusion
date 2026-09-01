@@ -33,7 +33,7 @@ WORK_DIR_FROM_ARG=""
 VBENCH_REPO="${VBENCH_REPO:-https://github.com/Vchitect/VBench.git}"
 VBENCH_BRANCH="${VBENCH_BRANCH:-master}"
 MAXDIFFUSION_REPO="${MAXDIFFUSION_REPO:-https://github.com/jitendra-jalwaniya/maxdiffusion.git}"
-MAXDIFFUSION_BRANCH="${MAXDIFFUSION_BRANCH:-two_machines}"
+MAXDIFFUSION_BRANCH="${MAXDIFFUSION_BRANCH:-codex}"
 BENCHMARK_JSON="${BENCHMARK_JSON:-VBench_full_info_sub3.json}"
 BENCHMARK_JSON_URL="${BENCHMARK_JSON_URL:-}"
 BENCHMARK_JSON_PATH="${BENCHMARK_JSON_PATH:-}"
@@ -191,12 +191,12 @@ run_over_ssh() {
   [[ -n "${GPU_NAME}" ]] || die "GPU_NAME must be specified when using --ssh mode."
 
   local source_script remote_script remote_util remote_command remote_json
+  local gcloud_args=("--zone=${GPU_ZONE}")
   source_script="$(absolute_file "${BASH_SOURCE[0]}")"
   remote_script="/tmp/run_gpu_eval_${USER:-user}_$$.sh"
   remote_util="/tmp/gpu_eval_utils_${USER:-user}_$$.py"
-  local project_args=()
   if [[ -n "${GPU_PROJECT}" ]]; then
-    project_args=("--project=${GPU_PROJECT}")
+    gcloud_args+=("--project=${GPU_PROJECT}")
   fi
 
   echo "=========================================================================="
@@ -208,10 +208,10 @@ run_over_ssh() {
   echo "  Results Dir: gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}"
   echo "=========================================================================="
 
-  local scp_script_cmd=("gcloud" "compute" "scp" "${source_script}" "${GPU_NAME}:${remote_script}" "--zone=${GPU_ZONE}" "${project_args[@]}")
+  local scp_script_cmd=("gcloud" "compute" "scp" "${source_script}" "${GPU_NAME}:${remote_script}" "${gcloud_args[@]}")
   "${scp_script_cmd[@]}"
 
-  local scp_util_cmd=("gcloud" "compute" "scp" "${UTIL_SCRIPT}" "${GPU_NAME}:${remote_util}" "--zone=${GPU_ZONE}" "${project_args[@]}")
+  local scp_util_cmd=("gcloud" "compute" "scp" "${UTIL_SCRIPT}" "${GPU_NAME}:${remote_util}" "${gcloud_args[@]}")
   "${scp_util_cmd[@]}"
 
   local remote_args=(
@@ -236,14 +236,14 @@ run_over_ssh() {
   fi
   if [[ -n "${BENCHMARK_JSON_PATH}" ]]; then
     remote_json="/tmp/${BENCHMARK_JSON}"
-    local scp_json_cmd=("gcloud" "compute" "scp" "${BENCHMARK_JSON_PATH}" "${GPU_NAME}:${remote_json}" "--zone=${GPU_ZONE}" "${project_args[@]}")
+    local scp_json_cmd=("gcloud" "compute" "scp" "${BENCHMARK_JSON_PATH}" "${GPU_NAME}:${remote_json}" "${gcloud_args[@]}")
     "${scp_json_cmd[@]}"
     remote_args+=("BENCHMARK_JSON_PATH=${remote_json}")
   fi
 
   remote_command="$(quote_command "bash $(shell_quote "${remote_script}")" "${remote_args[@]}")"
 
-  local ssh_cmd=("gcloud" "compute" "ssh" "${GPU_NAME}" "--zone=${GPU_ZONE}" "${project_args[@]}")
+  local ssh_cmd=("gcloud" "compute" "ssh" "${GPU_NAME}" "${gcloud_args[@]}")
   ssh_cmd+=("--command=${remote_command}")
   "${ssh_cmd[@]}"
 }

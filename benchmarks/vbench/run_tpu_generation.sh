@@ -84,7 +84,7 @@ SSH options:
   TPU_PROJECT        TPU VM project (default: tpu-prod-env-one-vm)
   REMOTE_DIR         MaxDiffusion repo path on the TPU VM (default: \$HOME/maxdiffusion)
   GIT_REPO           Repo to clone in SSH mode.
-  GIT_BRANCH         Branch to sync in SSH mode (default: two_machines)
+  GIT_BRANCH         Branch to sync in SSH mode (default: codex)
 EOF
 }
 
@@ -168,7 +168,7 @@ normalize_config() {
   set_default TPU_ZONE "southamerica-west1-a"
   set_default TPU_PROJECT "tpu-prod-env-one-vm"
   set_default GIT_REPO "https://github.com/jitendra-jalwaniya/maxdiffusion.git"
-  set_default GIT_BRANCH "two_machines"
+  set_default GIT_BRANCH "codex"
   set_default EXTERNAL_DISK "/mnt/disks/external_disk"
   EXTERNAL_DISK="${EXTERNAL_DISK%/}"
   for var in HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
