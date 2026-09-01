@@ -28,6 +28,7 @@ GCS_BUCKET="${GCS_BUCKET:-}"
 RUN_NAME="${RUN_NAME:-wan-inference-aug-31-1}"
 GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-}"
 GCS_RESULTS_DIR="${GCS_RESULTS_DIR:-}"
+UPLOAD_RESULTS="${UPLOAD_RESULTS:-true}"
 WORK_DIR_FROM_ARG=""
 
 VBENCH_REPO="${VBENCH_REPO:-https://github.com/Vchitect/VBench.git}"
@@ -64,6 +65,7 @@ Common options:
   DIMENSIONS         Space-separated VBench dimensions (default: read from JSON)
   GCS_VIDEO_DIR      GCS video prefix (default: \${RUN_NAME}/videos)
   GCS_RESULTS_DIR    GCS results prefix (default: \${RUN_NAME}/vbench_results)
+  UPLOAD_RESULTS     Upload results to GCS after evaluation (default: true; SSH mode uploads from the caller machine)
   WORK_DIR           Working directory on the GPU VM (default: \$HOME/vbench_evaluation)
 
 Metadata options:
@@ -143,6 +145,7 @@ normalize_config() {
   GCS_BUCKET="${GCS_BUCKET%/}"
   GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-${RUN_NAME}/videos}"
   GCS_RESULTS_DIR="${GCS_RESULTS_DIR:-${RUN_NAME}/vbench_results}"
+  [[ "${UPLOAD_RESULTS}" == "true" || "${UPLOAD_RESULTS}" == "false" ]] || die "UPLOAD_RESULTS must be true or false."
   WORK_DIR="${WORK_DIR_FROM_ARG:-${WORK_DIR:-$HOME/vbench_evaluation}}"
   BENCHMARK_JSON_URL="${BENCHMARK_JSON_URL:-https://raw.githubusercontent.com/jitendra-jalwaniya/maxdiffusion/${MAXDIFFUSION_BRANCH}/benchmarks/vbench/${BENCHMARK_JSON}}"
 
@@ -226,6 +229,7 @@ run_over_ssh() {
     "BENCHMARK_JSON=${BENCHMARK_JSON}"
     "BENCHMARK_JSON_URL=${BENCHMARK_JSON_URL}"
     "VBENCH_UTIL_PATH=${remote_util}"
+    "UPLOAD_RESULTS=false"
   )
 
   if [[ -n "${WORK_DIR_FROM_ARG}" ]]; then
@@ -246,6 +250,25 @@ run_over_ssh() {
   local ssh_cmd=("gcloud" "compute" "ssh" "${GPU_NAME}" "${gcloud_args[@]}")
   ssh_cmd+=("--command=${remote_command}")
   "${ssh_cmd[@]}"
+
+  if [[ "${UPLOAD_RESULTS}" == "true" ]]; then
+    local remote_results_dir local_results_parent previous_results_dir
+    if [[ -n "${WORK_DIR_FROM_ARG}" ]]; then
+      remote_results_dir="${WORK_DIR_FROM_ARG%/}/evaluation_results"
+    else
+      remote_results_dir="~/vbench_evaluation/evaluation_results"
+    fi
+
+    local_results_parent="$(mktemp -d "${TMPDIR:-/tmp}/vbench_results.XXXXXX")"
+    step "Copying evaluation results from ${GPU_NAME}:${remote_results_dir}..."
+    local scp_results_cmd=("gcloud" "compute" "scp" "--recurse" "${GPU_NAME}:${remote_results_dir}" "${local_results_parent}/" "${gcloud_args[@]}")
+    "${scp_results_cmd[@]}"
+
+    previous_results_dir="${RESULTS_DIR}"
+    RESULTS_DIR="${local_results_parent}/evaluation_results"
+    upload_results
+    RESULTS_DIR="${previous_results_dir}"
+  fi
 }
 
 python_supports_vbench() {
@@ -462,12 +485,20 @@ run_local() {
   download_videos
   prepare_videos
   run_vbench
-  upload_results
+  if [[ "${UPLOAD_RESULTS}" == "true" ]]; then
+    upload_results
+  else
+    step "Skipping GCS result upload."
+  fi
 
   echo ""
   echo "=========================================================================="
   echo "VBench evaluation finished successfully!"
-  echo "Results published to: gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}/"
+  if [[ "${UPLOAD_RESULTS}" == "true" ]]; then
+    echo "Results published to: gs://${GCS_BUCKET}/${GCS_RESULTS_DIR}/"
+  else
+    echo "Results upload skipped."
+  fi
   echo "Local results stored in: ${RESULTS_DIR}/"
   echo "=========================================================================="
 }
