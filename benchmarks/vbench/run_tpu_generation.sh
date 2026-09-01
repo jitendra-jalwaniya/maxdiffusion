@@ -194,6 +194,7 @@ normalize_config() {
   set_default GCS_VIDEO_DIR "${RUN_NAME}/videos"
   GCS_VIDEO_DIR="${GCS_VIDEO_DIR#/}"
   GCS_VIDEO_DIR="${GCS_VIDEO_DIR%/}"
+  [[ "${GCS_VIDEO_DIR}" == "${RUN_NAME}/videos" ]] || die "GCS_VIDEO_DIR must be ${RUN_NAME}/videos for TPU generation; pass RUN_NAME to choose the output directory."
 
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   if [[ -n "${MAXDIFFUSION_ROOT:-}" ]]; then
@@ -353,48 +354,22 @@ install_dependencies() {
   python3 -m uv pip install -e . || uv pip install -e . || python3 -m pip install -e .
 }
 
-upload_videos_to_gcs() {
-  local gcs_video_output_dir="$1"
-  shift
-  python3 - "${gcs_video_output_dir}" "$@" <<'PY'
-import sys
-
-from maxdiffusion.max_utils import upload_file_to_gcs
-
-gcs_video_output_dir = sys.argv[1].rstrip("/")
-for video_path in sys.argv[2:]:
-  upload_file_to_gcs(gcs_video_output_dir, video_path)
-PY
-}
-
 run_generation() {
-  local current_seed item key var value marker video
-  local -a seed_list args videos
+  local current_seed item key var value
+  local -a seed_list args
   read -r -a seed_list <<< "${SEEDS}"
   [[ ${#seed_list[@]} -gt 0 ]] || die "No seeds found. Pass SEED=<seed> or SEEDS=\"<seed1> <seed2>\"."
 
   step "Running WAN 2.2 27B inference for seed(s): ${SEEDS}..."
   for current_seed in "${seed_list[@]}"; do
     echo "==> Running inference with seed: ${current_seed}..."
-    marker="$(mktemp "${TMPDIR%/}/vbench_generation_${current_seed}.marker.XXXXXX")"
     args=(python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}")
     for item in "${WAN_OVERRIDES[@]}"; do
       IFS='|' read -r key var value <<< "${item}"
       args+=("${key}=${!var}")
     done
-    # Upload after generation so the GCS prefix preserves RUN_NAME exactly.
-    args+=("seed=${current_seed}")
+    args+=("seed=${current_seed}" "base_output_directory=gs://${GCS_BUCKET}")
     "${args[@]}"
-
-    videos=()
-    while IFS= read -r -d '' video; do
-      videos+=("${video}")
-    done < <(find . -maxdepth 1 -type f -name "wan_output_${current_seed}_*.mp4" -newer "${marker}" -print0)
-    rm -f "${marker}"
-    [[ ${#videos[@]} -gt 0 ]] || die "No generated videos found for seed ${current_seed}."
-
-    step "Uploading ${#videos[@]} generated video(s) to gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/..."
-    upload_videos_to_gcs "gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}" "${videos[@]}"
   done
 }
 
