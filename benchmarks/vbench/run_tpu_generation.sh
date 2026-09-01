@@ -69,8 +69,12 @@ Common options:
   SEEDS              Space-separated seeds for multiple samples.
   PROMPT_FILE        Prompt file path (default: ./benchmarks/vbench/prompts_3.txt)
   CONFIG_FILE        WAN config file (default: src/maxdiffusion/configs/base_wan_27b.yml)
-  HF_HOME            Hugging Face cache directory.
-  TMPDIR             Temporary files directory.
+  EXTERNAL_DISK      Mounted disk root for large local files (default: /mnt/disks/external_disk)
+  HF_CACHE_ROOT      Hugging Face cache root (default: \$EXTERNAL_DISK/hf_cache)
+  HF_HOME            Hugging Face home directory (default: \$HF_CACHE_ROOT)
+  HF_HUB_CACHE       Hugging Face Hub model cache (default: \$HF_HOME/hub)
+  HF_XET_CACHE       Hugging Face Xet cache (default: \$HF_HOME/xet)
+  TMPDIR             Temporary files directory (default: \$EXTERNAL_DISK/tmp)
 
 SSH options:
   --ssh              Copy this script to a TPU VM and run it there.
@@ -144,6 +148,16 @@ normalize_config() {
   set_default GIT_REPO "https://github.com/jitendra-jalwaniya/maxdiffusion.git"
   set_default GIT_BRANCH "two_machines"
   set_default EXTERNAL_DISK "/mnt/disks/external_disk"
+  EXTERNAL_DISK="${EXTERNAL_DISK%/}"
+  set_default HF_CACHE_ROOT "${EXTERNAL_DISK}/hf_cache"
+  set_default HF_HOME "${HF_CACHE_ROOT}"
+  set_default HF_HUB_CACHE "${HF_HOME}/hub"
+  set_default HF_XET_CACHE "${HF_HOME}/xet"
+  set_default HF_ASSETS_CACHE "${HF_HOME}/assets"
+  set_default HF_DATASETS_CACHE "${HF_HOME}/datasets"
+  set_default HF_MODULES_CACHE "${HF_HOME}/modules"
+  set_default TRANSFORMERS_CACHE "${HF_HUB_CACHE}"
+  set_default TMPDIR "${EXTERNAL_DISK}/tmp"
   set_default VENV_DIR "${HOME}/maxdiffusion_venv"
 
   for item in "${WAN_OVERRIDES[@]}"; do
@@ -176,6 +190,10 @@ print_config() {
   echo "  Config File: ${CONFIG_FILE}"
   echo "  Seeds:       ${SEEDS}"
   echo "  Repo Root:   ${REPO_ROOT}"
+  echo "  HF Cache:    ${HF_CACHE_ROOT}"
+  echo "  HF Hub:      ${HF_HUB_CACHE}"
+  echo "  HF Xet:      ${HF_XET_CACHE}"
+  echo "  Temp Dir:    ${TMPDIR}"
   echo "=========================================================================="
 }
 
@@ -186,7 +204,7 @@ emit_remote_arg() {
 
 emit_remote_args() {
   local item key var value
-  for var in GCS_BUCKET SEED SEEDS CONFIG_FILE HF_HOME TMPDIR EXTERNAL_DISK VENV_DIR; do
+  for var in GCS_BUCKET SEED SEEDS CONFIG_FILE EXTERNAL_DISK HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR VENV_DIR; do
     emit_remote_arg "${var}"
   done
   for item in "${WAN_OVERRIDES[@]}"; do
@@ -248,14 +266,24 @@ EOF
 }
 
 configure_cache_dirs() {
-  if [[ -z "${HF_HOME:-}" ]]; then
-    [[ -d "${EXTERNAL_DISK}" && -w "${EXTERNAL_DISK}" ]] && HF_HOME="${EXTERNAL_DISK}/hf_cache" || HF_HOME="${HOME}/hf_cache"
-  fi
-  if [[ -z "${TMPDIR:-}" ]]; then
-    [[ -d "${EXTERNAL_DISK}" && -w "${EXTERNAL_DISK}" ]] && TMPDIR="${EXTERNAL_DISK}/tmp" || TMPDIR="/tmp"
-  fi
-  export HF_HOME TMPDIR
-  mkdir -p "${HF_HOME}" "${TMPDIR}"
+  local cache_var external_device root_device
+
+  [[ -d "${EXTERNAL_DISK}" ]] || die "External disk ${EXTERNAL_DISK} is not mounted. Mount it or pass EXTERNAL_DISK=<mounted-disk-path>."
+  [[ -w "${EXTERNAL_DISK}" ]] || die "External disk ${EXTERNAL_DISK} is not writable."
+
+  root_device="$(df -P / | awk 'NR == 2 {print $1}')"
+  external_device="$(df -P "${EXTERNAL_DISK}" | awk 'NR == 2 {print $1}')"
+  [[ "${external_device}" != "${root_device}" ]] || die "${EXTERNAL_DISK} is on ${external_device}, the same filesystem as /. Refusing to put Hugging Face caches on the boot disk."
+
+  for cache_var in HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
+    case "${!cache_var%/}" in
+      "${EXTERNAL_DISK}" | "${EXTERNAL_DISK}/"*) ;;
+      *) die "${cache_var}=${!cache_var} must be under EXTERNAL_DISK=${EXTERNAL_DISK}." ;;
+    esac
+  done
+
+  export HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR
+  mkdir -p "${HF_HOME}" "${HF_HUB_CACHE}" "${HF_XET_CACHE}" "${HF_ASSETS_CACHE}" "${HF_DATASETS_CACHE}" "${HF_MODULES_CACHE}" "${TRANSFORMERS_CACHE}" "${TMPDIR}"
 }
 
 python_supports_wan() {
