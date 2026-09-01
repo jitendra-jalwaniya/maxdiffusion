@@ -347,20 +347,24 @@ create_python_env() {
   source "${VENV_DIR}/bin/activate"
 }
 
-gcs_cp() {
-  if have gcloud && gcloud storage cp "$@"; then
-    return 0
-  fi
-  if have gsutil && gsutil -m cp "$@"; then
-    return 0
-  fi
-  return 1
-}
-
 install_dependencies() {
   step "Installing MaxDiffusion TPU dependencies..."
   bash setup.sh MODE=stable DEVICE=tpu
   python3 -m uv pip install -e . || uv pip install -e . || python3 -m pip install -e .
+}
+
+upload_videos_to_gcs() {
+  local gcs_video_output_dir="$1"
+  shift
+  python3 - "${gcs_video_output_dir}" "$@" <<'PY'
+import sys
+
+from maxdiffusion.max_utils import upload_file_to_gcs
+
+gcs_video_output_dir = sys.argv[1].rstrip("/")
+for video_path in sys.argv[2:]:
+  upload_file_to_gcs(gcs_video_output_dir, video_path)
+PY
 }
 
 run_generation() {
@@ -378,7 +382,7 @@ run_generation() {
       IFS='|' read -r key var value <<< "${item}"
       args+=("${key}=${!var}")
     done
-    # Upload from this wrapper so the GCS prefix preserves RUN_NAME exactly.
+    # Upload after generation so the GCS prefix preserves RUN_NAME exactly.
     args+=("seed=${current_seed}")
     "${args[@]}"
 
@@ -390,7 +394,7 @@ run_generation() {
     [[ ${#videos[@]} -gt 0 ]] || die "No generated videos found for seed ${current_seed}."
 
     step "Uploading ${#videos[@]} generated video(s) to gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/..."
-    gcs_cp "${videos[@]}" "gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/" || die "Failed to upload generated videos to GCS."
+    upload_videos_to_gcs "gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}" "${videos[@]}"
   done
 }
 
