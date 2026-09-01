@@ -25,6 +25,7 @@
 set -euo pipefail
 
 GCS_BUCKET="${GCS_BUCKET:-}"
+GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-}"
 SEED="${SEED:-}"
 SEEDS="${SEEDS:-}"
 SSH_MODE=false
@@ -66,6 +67,7 @@ Required:
 
 Common options:
   RUN_NAME           Generation run name (default: wan-inference)
+  GCS_VIDEO_DIR      GCS video prefix (default: \${RUN_NAME}/videos)
   SEED               Single seed used when SEEDS is not set (default: 12345)
   SEEDS              Space-separated seeds for multiple samples.
   PROMPT_FILE        Prompt file path (default: ./benchmarks/vbench/prompts_3.txt)
@@ -189,6 +191,9 @@ normalize_config() {
     IFS='|' read -r key var value <<< "${item}"
     set_default "${var}" "${value}"
   done
+  set_default GCS_VIDEO_DIR "${RUN_NAME}/videos"
+  GCS_VIDEO_DIR="${GCS_VIDEO_DIR#/}"
+  GCS_VIDEO_DIR="${GCS_VIDEO_DIR%/}"
 
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   if [[ -n "${MAXDIFFUSION_ROOT:-}" ]]; then
@@ -211,6 +216,7 @@ print_config() {
   echo "Starting VBench video generation on TPU VM"
   echo "  Run Name:    ${RUN_NAME}"
   echo "  GCS Bucket:  gs://${GCS_BUCKET}"
+  echo "  Video Target: gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}"
   echo "  Prompt File: ${PROMPT_FILE}"
   echo "  Config File: ${CONFIG_FILE}"
   echo "  Seeds:       ${SEEDS}"
@@ -236,7 +242,7 @@ emit_remote_arg_if_explicit() {
 
 emit_remote_args() {
   local item key var value
-  for var in GCS_BUCKET SEED SEEDS CONFIG_FILE EXTERNAL_DISK HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
+  for var in GCS_BUCKET GCS_VIDEO_DIR SEED SEEDS CONFIG_FILE EXTERNAL_DISK HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
     emit_remote_arg "${var}"
   done
   emit_remote_arg_if_explicit VENV_DIR
@@ -267,6 +273,7 @@ run_over_ssh() {
   echo "  TPU Project: ${TPU_PROJECT}"
   echo "  Remote Dir:  ${remote_dir_label}"
   echo "  GCS Bucket:  gs://${GCS_BUCKET}"
+  echo "  Video Target: gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}"
   echo "=========================================================================="
 
   gcloud compute tpus tpu-vm scp "${source_script}" "${TPU_NAME}:${remote_script}" "${gcloud_args[@]}"
@@ -340,6 +347,16 @@ create_python_env() {
   source "${VENV_DIR}/bin/activate"
 }
 
+gcs_cp() {
+  if have gcloud && gcloud storage cp "$@"; then
+    return 0
+  fi
+  if have gsutil && gsutil -m cp "$@"; then
+    return 0
+  fi
+  return 1
+}
+
 install_dependencies() {
   step "Installing MaxDiffusion TPU dependencies..."
   bash setup.sh MODE=stable DEVICE=tpu
@@ -347,21 +364,33 @@ install_dependencies() {
 }
 
 run_generation() {
-  local current_seed item key var value
-  local -a seed_list args
+  local current_seed item key var value marker video
+  local -a seed_list args videos
   read -r -a seed_list <<< "${SEEDS}"
   [[ ${#seed_list[@]} -gt 0 ]] || die "No seeds found. Pass SEED=<seed> or SEEDS=\"<seed1> <seed2>\"."
 
   step "Running WAN 2.2 27B inference for seed(s): ${SEEDS}..."
   for current_seed in "${seed_list[@]}"; do
     echo "==> Running inference with seed: ${current_seed}..."
+    marker="$(mktemp "${TMPDIR%/}/vbench_generation_${current_seed}.marker.XXXXXX")"
     args=(python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}")
     for item in "${WAN_OVERRIDES[@]}"; do
       IFS='|' read -r key var value <<< "${item}"
       args+=("${key}=${!var}")
     done
-    args+=("seed=${current_seed}" "base_output_directory=gs://${GCS_BUCKET}")
+    # Upload from this wrapper so the GCS prefix preserves RUN_NAME exactly.
+    args+=("seed=${current_seed}")
     "${args[@]}"
+
+    videos=()
+    while IFS= read -r -d '' video; do
+      videos+=("${video}")
+    done < <(find . -maxdepth 1 -type f -name "wan_output_${current_seed}_*.mp4" -newer "${marker}" -print0)
+    rm -f "${marker}"
+    [[ ${#videos[@]} -gt 0 ]] || die "No generated videos found for seed ${current_seed}."
+
+    step "Uploading ${#videos[@]} generated video(s) to gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/..."
+    gcs_cp "${videos[@]}" "gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/" || die "Failed to upload generated videos to GCS."
   done
 }
 
@@ -388,10 +417,14 @@ run_local() {
   echo ""
   echo "=========================================================================="
   echo "TPU video generation complete!"
-  echo "Generated videos saved to: gs://${GCS_BUCKET}/${RUN_NAME}/videos/"
+  echo "Generated videos saved to: gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}/"
   echo ""
   echo "Next Step: run benchmarks/vbench/run_gpu_eval.sh on your GPU VM:"
-  echo "  bash benchmarks/vbench/run_gpu_eval.sh GCS_BUCKET=${GCS_BUCKET} RUN_NAME=${RUN_NAME}"
+  if [[ "${GCS_VIDEO_DIR}" != "${RUN_NAME}/videos" ]]; then
+    echo "  bash benchmarks/vbench/run_gpu_eval.sh GCS_BUCKET=${GCS_BUCKET} RUN_NAME=${RUN_NAME} GCS_VIDEO_DIR=${GCS_VIDEO_DIR}"
+  else
+    echo "  bash benchmarks/vbench/run_gpu_eval.sh GCS_BUCKET=${GCS_BUCKET} RUN_NAME=${RUN_NAME}"
+  fi
   echo "=========================================================================="
 }
 
