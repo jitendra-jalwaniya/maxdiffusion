@@ -402,12 +402,10 @@ def run(config, pipeline=None, filename_prefix="", commit_hash=None):
   model_name_prefix = model_name.replace(".", "_")
   gcs_output_path = max_utils.get_gcs_output_path(config)
 
-  last_out = None
   if not is_multi_prompt:
     prompt = [prompts[0]] * batch_size
     negative_prompt = [negative_prompt_str] * batch_size
     out = call_pipeline(config, pipeline, prompt, negative_prompt)
-    last_out = out
     videos = out.frames if hasattr(out, "frames") else out[0]
     audios = out.audio if hasattr(out, "audio") else None
     for i in range(len(videos)):
@@ -435,7 +433,6 @@ def run(config, pipeline=None, filename_prefix="", commit_hash=None):
       negative_prompt = [negative_prompt_str] * batch_size
 
       out = call_pipeline(config, pipeline, padded_chunk, negative_prompt)
-      last_out = out
       videos = out.frames if hasattr(out, "frames") else out[0]
       audios = out.audio if hasattr(out, "audio") else None
       for j in range(actual_chunk_len):
