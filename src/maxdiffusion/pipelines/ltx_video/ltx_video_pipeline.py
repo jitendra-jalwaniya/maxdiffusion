@@ -658,7 +658,7 @@ class LTXVideoPipeline:
       **kwargs,
   ):
     key = jax.random.PRNGKey(seed)
-    prompt = self.config.prompt
+    prompt = kwargs.get("prompt", self.config.prompt)
     is_video = kwargs.get("is_video", False)
     if prompt is not None and isinstance(prompt, str):
       batch_size = 1
@@ -1154,6 +1154,7 @@ class LTXMultiScalePipeline:
       seed: int = 0,
       enhance_prompt: bool = False,
       conditioning_items: Optional[List[ConditioningItem]] = None,
+      prompt: Optional[Union[str, List[str]]] = None,
   ) -> Any:
     # first pass
     original_output_type = output_type
@@ -1178,6 +1179,7 @@ class LTXMultiScalePipeline:
         conditioning_items=conditioning_items,
         skip_layer_strategy=None,
         skip_block_list=config.first_pass["skip_block_list"],
+        prompt=prompt,
     )
     latents = result
     max_logging.log("first pass done")
@@ -1208,6 +1210,7 @@ class LTXMultiScalePipeline:
         conditioning_items=conditioning_items,
         skip_layer_strategy=None,
         skip_block_list=config.second_pass["skip_block_list"],
+        prompt=prompt,
     )
 
     if original_output_type != "latent":

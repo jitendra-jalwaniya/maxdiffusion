@@ -183,35 +183,43 @@ def run(config):
   prompt_file = getattr(config, "prompt_file", "")
   prompts = max_utils.load_prompts(prompt_file, default_prompt=config.prompt)
   gcs_output_path = max_utils.get_gcs_output_path(config)
+  prompt_enhancement_words_threshold = getattr(config, "prompt_enhancement_words_threshold", 0)
+  any_enhance_prompt = any(
+      prompt_enhancement_words_threshold > 0 and len(prompt.split()) < prompt_enhancement_words_threshold
+      for prompt in prompts
+  )
+
+  pipeline = LTXVideoPipeline.from_pretrained(config, enhance_prompt=any_enhance_prompt)
+  if config.pipeline_type == "multi-scale":
+    pipeline = LTXMultiScalePipeline(pipeline)
+  conditioning_media_paths = config.conditioning_media_paths if isinstance(config.conditioning_media_paths, List) else None
+  conditioning_start_frames = config.conditioning_start_frames
+  conditioning_strengths = None
+  if conditioning_media_paths:
+    if not conditioning_strengths:
+      conditioning_strengths = [1.0] * len(conditioning_media_paths)
+  conditioning_items = (
+      prepare_conditioning(
+          conditioning_media_paths=conditioning_media_paths,
+          conditioning_strengths=conditioning_strengths,
+          conditioning_start_frames=conditioning_start_frames,
+          height=config.height,
+          width=config.width,
+          padding=padding,
+      )
+      if conditioning_media_paths
+      else None
+  )
 
   for prompt_idx, current_prompt in enumerate(prompts):
     prompt_word_count = len(current_prompt.split())
-    enhance_prompt = prompt_enhancement_words_threshold > 0 and prompt_word_count < prompt_enhancement_words_threshold
-
-    pipeline = LTXVideoPipeline.from_pretrained(config, enhance_prompt=enhance_prompt)
-    if config.pipeline_type == "multi-scale":
-      pipeline = LTXMultiScalePipeline(pipeline)
-    conditioning_media_paths = config.conditioning_media_paths if isinstance(config.conditioning_media_paths, List) else None
-    conditioning_start_frames = config.conditioning_start_frames
-    conditioning_strengths = None
-    if conditioning_media_paths:
-      if not conditioning_strengths:
-        conditioning_strengths = [1.0] * len(conditioning_media_paths)
-    conditioning_items = (
-        prepare_conditioning(
-            conditioning_media_paths=conditioning_media_paths,
-            conditioning_strengths=conditioning_strengths,
-            conditioning_start_frames=conditioning_start_frames,
-            height=config.height,
-            width=config.width,
-            padding=padding,
-        )
-        if conditioning_media_paths
-        else None
+    enhance_prompt = (
+        prompt_enhancement_words_threshold > 0 and prompt_word_count < prompt_enhancement_words_threshold
     )
 
     s0 = time.perf_counter()
     images = pipeline(
+        prompt=current_prompt,
         height=height_padded,
         width=width_padded,
         num_frames=num_frames_padded,
