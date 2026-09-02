@@ -25,6 +25,7 @@ from .. import pyconfig
 from maxdiffusion.max_utils import (
     create_device_mesh,
     get_flash_block_sizes,
+    load_prompts,
 )
 from maxdiffusion import (FlaxStableDiffusionXLPipeline, FlaxDDIMScheduler, FlaxDDPMScheduler, maxdiffusion_utils)
 
@@ -36,6 +37,12 @@ class MaxDiffusionUtilsTest(unittest.TestCase):
 
   def setUp(self):
     MaxDiffusionUtilsTest.dummy_data = {}
+
+  def test_load_prompts_raises_when_no_prompt_source_exists(self):
+    with self.assertRaisesRegex(ValueError, "No prompts found"):
+      load_prompts("", "")
+    with self.assertRaisesRegex(ValueError, "No prompts found"):
+      load_prompts("   ", "")
 
   def test_get_dummy_wan_inputs_generates_latents_without_pipeline_prepare_latents(self):
     config = SimpleNamespace(height=64, width=80, num_frames=9, seed=0)

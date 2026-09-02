@@ -363,16 +363,17 @@ def load_prompts(prompt_file_path: str = "", default_prompt: str = "") -> list[s
   Supports local files, GCS URIs (gs://bucket/path/to/prompts.txt), and HTTP/HTTPS URLs.
   Each line in the file is treated as a separate prompt. Empty lines and whitespace are stripped.
   """
+  no_prompts_error = "No prompts found. Both prompt_file_path and default_prompt are empty."
   if not prompt_file_path:
     if default_prompt:
       return [default_prompt]
-    return []
+    raise ValueError(no_prompts_error)
 
   prompt_file_path = prompt_file_path.strip()
   if not prompt_file_path:
     if default_prompt:
       return [default_prompt]
-    return []
+    raise ValueError(no_prompts_error)
 
   max_logging.log(f"Loading prompts from file: {prompt_file_path}")
   raw_lines = []
