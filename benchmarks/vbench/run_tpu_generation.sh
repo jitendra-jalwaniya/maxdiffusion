@@ -55,7 +55,7 @@ WAN_OVERRIDES=(
   "use_experimental_scheduler|USE_EXPERIMENTAL_SCHEDULER|true"
   "use_batched_text_encoder|USE_BATCHED_TEXT_ENCODER|true"
   "flash_block_sizes|FLASH_BLOCK_SIZES|"
-  "prompt_file|PROMPT_FILE|./benchmarks/vbench/prompts_3.txt"
+  "prompt_file|PROMPT_FILE|./benchmarks/vbench/prompts_110.txt"
 )
 
 usage() {
@@ -70,7 +70,7 @@ Common options:
   GCS_VIDEO_DIR      GCS video prefix (default: \${RUN_NAME}/videos)
   SEED               Single seed used when SEEDS is not set (default: 12345)
   SEEDS              Space-separated seeds for multiple samples.
-  PROMPT_FILE        Prompt file path (default: ./benchmarks/vbench/prompts_3.txt)
+  PROMPT_FILE        Prompt file path (default: ./benchmarks/vbench/prompts_110.txt)
   CONFIG_FILE        WAN config file (default: src/maxdiffusion/configs/base_wan_27b.yml)
   EXTERNAL_DISK      Mounted disk root for large local files (default: /mnt/disks/external_disk)
   HF_CACHE_ROOT      Hugging Face cache root (default: \$EXTERNAL_DISK/hf_cache)
