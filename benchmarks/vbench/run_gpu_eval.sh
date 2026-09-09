@@ -44,6 +44,7 @@ VBENCH_UTIL_PATH="${VBENCH_UTIL_PATH:-}"
 GPU_NAME="${GPU_NAME:-}"
 GPU_ZONE="${GPU_ZONE:-us-central1-a}"
 GPU_PROJECT="${GPU_PROJECT:-}"
+INTERNAL_IP="${INTERNAL_IP:-false}"
 SSH_MODE=false
 
 DIMENSIONS_TEXT="${DIMENSIONS:-}"
@@ -80,6 +81,7 @@ SSH options:
   GPU_NAME           GPU VM name.
   GPU_ZONE           GPU VM zone (default: ${GPU_ZONE})
   GPU_PROJECT        Optional GCP project for the GPU VM.
+  INTERNAL_IP        Connect to GPU VM using internal IP (default: false).
 EOF
 }
 
@@ -201,6 +203,9 @@ run_over_ssh() {
   remote_util="/tmp/gpu_eval_utils_${USER:-user}_$$.py"
   if [[ -n "${GPU_PROJECT}" ]]; then
     gcloud_args+=("--project=${GPU_PROJECT}")
+  fi
+  if [[ "${INTERNAL_IP}" == "true" ]]; then
+    gcloud_args+=("--internal-ip")
   fi
 
   echo "=========================================================================="
@@ -361,7 +366,7 @@ install_cuda_torch() {
 
 patch_vbench_sources() {
   step "Applying VBench compatibility patches..."
-  git -C VBench checkout -- setup.py vbench/distributed.py evaluate.py >/dev/null 2>&1 || true
+  git -C VBench checkout -- setup.py vbench/distributed.py evaluate.py vbench/__init__.py >/dev/null 2>&1 || true
   python3 "${UTIL_SCRIPT}" patch-vbench VBench
 }
 

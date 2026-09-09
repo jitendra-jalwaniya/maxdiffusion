@@ -80,6 +80,35 @@ def patch_vbench(args: argparse.Namespace) -> None:
           ),
       ],
   )
+  patch_file(
+      root / "vbench/__init__.py",
+      [
+          ("import os\n", "import os\nimport re\n"),
+          (
+              (
+                  "            for prompt_dict in full_info_list:\n"
+                  "                # if the prompt belongs to any dimension we want to evaluate\n"
+                  '                if set(dimension_list) & set(prompt_dict["dimension"]): \n'
+                  "                    prompt = prompt_dict['prompt_en']\n"
+                  "                    prompt_dict['video_list'] = []\n"
+                  "                    for i in range(5): # video index for the same prompt\n"
+                  "                        intended_video_name = f'{prompt}{special_str}-{str(i)}{postfix}'"
+              ),
+              (
+                  "            for idx, prompt_dict in enumerate(full_info_list):\n"
+                  "                # if the prompt belongs to any dimension we want to evaluate\n"
+                  '                if set(dimension_list) & set(prompt_dict["dimension"]): \n'
+                  "                    prompt = prompt_dict['prompt_en']\n"
+                  "                    safe_prompt = re.sub(r'[^\\w\\s-]', '_', prompt).strip()[:120]\n"
+                  "                    prompt_dict['video_list'] = []\n"
+                  "                    for i in range(5): # video index for the same prompt\n"
+                  "                        intended_video_name = f'{safe_prompt}_{idx}-{str(i)}{postfix}'\n"
+                  "                        if intended_video_name not in video_names:\n"
+                  "                            intended_video_name = f'{prompt}{special_str}-{str(i)}{postfix}'"
+              ),
+          ),
+      ],
+  )
 
 
 def prepare_videos(args: argparse.Namespace) -> None:
