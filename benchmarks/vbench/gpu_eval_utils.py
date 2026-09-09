@@ -102,12 +102,11 @@ def prepare_videos(args: argparse.Namespace) -> None:
   for idx, item in enumerate(bench_data):
     prompt = item["prompt_en"]
     safe_prompt = re.sub(r"[^\w\s-]", "_", prompt).strip()[:120]
-    candidates = prompt_video_map.get(idx) or (
-        [downloaded[idx]] if idx < len(downloaded) else []
-    )
+    candidates = prompt_video_map.get(idx, [])
     if not candidates:
-      print(f"Warning: no matching video found for prompt {idx} ({prompt[:40]!r})")
-      continue
+      raise FileNotFoundError(
+          f"No video found matching prompt index {idx} ({prompt[:40]!r})."
+      )
 
     matched_prompts += 1
     for slot in range(args.samples_per_prompt):
