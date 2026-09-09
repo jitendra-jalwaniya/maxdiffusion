@@ -45,6 +45,8 @@ def patch_file(path: Path, replacements: list[tuple[str, str]]) -> None:
 
   text = path.read_text()
   for old, new in replacements:
+    if old not in text:
+      print(f"Warning: patch target {old!r} not found in {path}. Upstream may have changed.")
     text = text.replace(old, new)
   path.write_text(text)
 
@@ -73,7 +75,8 @@ def patch_vbench(args: argparse.Namespace) -> None:
       [
           (
               'device = torch.device("cuda")',
-              'device = torch.device(f"cuda:{int(os.environ.get(\'LOCAL_RANK\', \'0\'))}") if torch.cuda.is_available() else torch.device("cpu")',
+              'assert torch.cuda.is_available(), "CUDA is not available, but is required for VBench evaluation."\n'
+              '    device = torch.device(f"cuda:{int(os.environ.get(\'LOCAL_RANK\', \'0\'))}")',
           ),
       ],
   )
@@ -83,6 +86,7 @@ def prepare_videos(args: argparse.Namespace) -> None:
   with open(args.json_file, encoding="utf-8") as f:
     bench_data = json.load(f)
 
+  shutil.rmtree(args.vbench_dir, ignore_errors=True)
   os.makedirs(args.vbench_dir, exist_ok=True)
   downloaded = sorted(glob.glob(os.path.join(args.download_dir, "*.mp4")))
   print(f"Downloaded {len(downloaded)} videos from GCS.")
