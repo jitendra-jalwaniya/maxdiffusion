@@ -101,6 +101,7 @@ def prepare_videos(args: argparse.Namespace) -> None:
   total_linked = 0
   for idx, item in enumerate(bench_data):
     prompt = item["prompt_en"]
+    safe_prompt = re.sub(r"[^\w\s-]", "_", prompt).strip()[:120]
     candidates = prompt_video_map.get(idx) or (
         [downloaded[idx]] if idx < len(downloaded) else []
     )
@@ -110,7 +111,7 @@ def prepare_videos(args: argparse.Namespace) -> None:
 
     matched_prompts += 1
     for slot in range(args.samples_per_prompt):
-      target_path = os.path.join(args.vbench_dir, f"{prompt}-{slot}.mp4")
+      target_path = os.path.join(args.vbench_dir, f"{safe_prompt}_{idx}-{slot}.mp4")
       source_path = candidates[slot % len(candidates)]
 
       if os.path.lexists(target_path):
