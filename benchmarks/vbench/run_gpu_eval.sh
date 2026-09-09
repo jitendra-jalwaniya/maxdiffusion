@@ -455,12 +455,25 @@ run_vbench() {
   mkdir -p "${RESULTS_DIR}"
   (
     cd "${WORK_DIR}/VBench"
-    python3 evaluate.py \
-      --videos_path "${VBENCH_VIDEO_DIR}" \
-      --full_json_dir "${JSON_DEST}" \
-      --output_path "${RESULTS_DIR}" \
-      --dimension "${DIMENSIONS[@]}" \
-      --mode vbench_standard
+    local num_gpus=1
+    if have nvidia-smi; then
+      num_gpus=$( (nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || true) | wc -l)
+    fi
+    if [[ "${num_gpus}" -gt 1 ]]; then
+      torchrun --nproc_per_node="${num_gpus}" evaluate.py \
+        --videos_path "${VBENCH_VIDEO_DIR}" \
+        --full_json_dir "${JSON_DEST}" \
+        --output_path "${RESULTS_DIR}" \
+        --dimension "${DIMENSIONS[@]}" \
+        --mode vbench_standard
+    else
+      python3 evaluate.py \
+        --videos_path "${VBENCH_VIDEO_DIR}" \
+        --full_json_dir "${JSON_DEST}" \
+        --output_path "${RESULTS_DIR}" \
+        --dimension "${DIMENSIONS[@]}" \
+        --mode vbench_standard
+    fi
   )
 }
 
