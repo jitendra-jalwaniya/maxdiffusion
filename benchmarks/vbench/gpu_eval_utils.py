@@ -86,8 +86,6 @@ def prepare_videos(args: argparse.Namespace) -> None:
   with open(args.json_file, encoding="utf-8") as f:
     bench_data = json.load(f)
 
-  shutil.rmtree(args.vbench_dir, ignore_errors=True)
-  os.makedirs(args.vbench_dir, exist_ok=True)
   downloaded = sorted(glob.glob(os.path.join(args.download_dir, "*.mp4")))
   print(f"Downloaded {len(downloaded)} videos from GCS.")
 
@@ -97,31 +95,28 @@ def prepare_videos(args: argparse.Namespace) -> None:
     if match:
       prompt_video_map.setdefault(int(match.group(1)), []).append(video_path)
 
-  matched_prompts = 0
-  total_linked = 0
+  prepared_videos: list[tuple[str, int, str]] = []
   for idx, item in enumerate(bench_data):
     prompt = item["prompt_en"]
     safe_prompt = re.sub(r"[^\w\s-]", "_", prompt).strip()[:120]
     candidates = prompt_video_map.get(idx, [])
-    if not candidates:
-      raise FileNotFoundError(
-          f"No video found matching prompt index {idx} ({prompt[:40]!r})."
+    if len(candidates) != 1:
+      raise ValueError(
+          f"Expected exactly one video for prompt index {idx} "
+          f"({prompt[:40]!r}), but found {len(candidates)}."
       )
+    prepared_videos.append((safe_prompt, idx, candidates[0]))
 
-    matched_prompts += 1
-    for slot in range(args.samples_per_prompt):
-      target_path = os.path.join(args.vbench_dir, f"{safe_prompt}_{idx}-{slot}.mp4")
-      source_path = candidates[slot % len(candidates)]
+  shutil.rmtree(args.vbench_dir, ignore_errors=True)
+  os.makedirs(args.vbench_dir, exist_ok=True)
+  for safe_prompt, idx, source_path in prepared_videos:
+    target_path = os.path.join(args.vbench_dir, f"{safe_prompt}_{idx}-0.mp4")
+    try:
+      os.symlink(os.path.abspath(source_path), target_path)
+    except OSError:
+      shutil.copy2(source_path, target_path)
 
-      if os.path.lexists(target_path):
-        os.remove(target_path)
-      try:
-        os.symlink(os.path.abspath(source_path), target_path)
-      except OSError:
-        shutil.copy2(source_path, target_path)
-      total_linked += 1
-
-  print(f"Prepared {total_linked} VBench video entries for {matched_prompts}/{len(bench_data)} prompts.")
+  print(f"Prepared {len(prepared_videos)} VBench video entries.")
 
 
 def main() -> None:
@@ -140,7 +135,6 @@ def main() -> None:
   prepare.add_argument("json_file")
   prepare.add_argument("download_dir")
   prepare.add_argument("vbench_dir")
-  prepare.add_argument("--samples-per-prompt", type=int, default=5)
   prepare.set_defaults(func=prepare_videos)
 
   args = parser.parse_args()

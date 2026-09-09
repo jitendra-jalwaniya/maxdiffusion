@@ -26,8 +26,6 @@ set -euo pipefail
 
 GCS_BUCKET="${GCS_BUCKET:-}"
 GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-}"
-SEED="${SEED:-}"
-SEEDS="${SEEDS:-}"
 TPU_NAME="${TPU_NAME:-}"
 TPU_ZONE="${TPU_ZONE:-}"
 TPU_PROJECT="${TPU_PROJECT:-}"
@@ -71,8 +69,6 @@ Required:
 Common options:
   RUN_NAME           Generation run name (default: wan-inference)
   GCS_VIDEO_DIR      GCS video prefix (default: \${RUN_NAME}/videos)
-  SEED               Single seed used when SEEDS is not set (default: 12345)
-  SEEDS              Space-separated seeds for multiple samples.
   PROMPT_FILE        Prompt file path (default: ./benchmarks/vbench/prompts_110.txt)
   CONFIG_FILE        WAN config file (default: src/maxdiffusion/configs/base_wan_27b.yml)
   EXTERNAL_DISK      Mounted disk root for large local files (default: /mnt/disks/external_disk)
@@ -167,8 +163,6 @@ normalize_config() {
   GCS_BUCKET="${GCS_BUCKET%/}"
   set_default CONFIG_FILE "src/maxdiffusion/configs/base_wan_27b.yml"
   set_default FLASH_BLOCK_SIZES "${DEFAULT_FLASH_BLOCK_SIZES}"
-  set_default SEED "12345"
-  set_default SEEDS "${SEED}"
   set_default TPU_NAME ""
   set_default TPU_ZONE ""
   set_default TPU_PROJECT ""
@@ -227,7 +221,7 @@ print_config() {
   echo "  Video Target: gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}"
   echo "  Prompt File: ${PROMPT_FILE}"
   echo "  Config File: ${CONFIG_FILE}"
-  echo "  Seeds:       ${SEEDS}"
+  echo "  Seed:        12345"
   echo "  Repo Root:   ${REPO_ROOT}"
   echo "  HF Cache:    ${HF_CACHE_ROOT}"
   echo "  HF Hub:      ${HF_HUB_CACHE}"
@@ -250,7 +244,7 @@ emit_remote_arg_if_explicit() {
 
 emit_remote_args() {
   local item key var value
-  for var in GCS_BUCKET GCS_VIDEO_DIR SEED SEEDS CONFIG_FILE EXTERNAL_DISK HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
+  for var in GCS_BUCKET GCS_VIDEO_DIR CONFIG_FILE EXTERNAL_DISK HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
     emit_remote_arg "${var}"
   done
   emit_remote_arg_if_explicit VENV_DIR
@@ -363,22 +357,16 @@ install_dependencies() {
 }
 
 run_generation() {
-  local current_seed item key var value
-  local -a seed_list args
-  read -r -a seed_list <<< "${SEEDS}"
-  [[ ${#seed_list[@]} -gt 0 ]] || die "No seeds found. Pass SEED=<seed> or SEEDS=\"<seed1> <seed2>\"."
-
-  step "Running WAN 2.2 27B inference for seed(s): ${SEEDS}..."
-  for current_seed in "${seed_list[@]}"; do
-    echo "==> Running inference with seed: ${current_seed}..."
-    args=(python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}")
-    for item in "${WAN_OVERRIDES[@]}"; do
-      IFS='|' read -r key var value <<< "${item}"
-      args+=("${key}=${!var}")
-    done
-    args+=("seed=${current_seed}" "base_output_directory=gs://${GCS_BUCKET}")
-    "${args[@]}"
+  local item key var value
+  local -a args
+  step "Running WAN 2.2 27B inference with seed: 12345..."
+  args=(python3 src/maxdiffusion/generate_wan.py "${CONFIG_FILE}")
+  for item in "${WAN_OVERRIDES[@]}"; do
+    IFS='|' read -r key var value <<< "${item}"
+    args+=("${key}=${!var}")
   done
+  args+=("seed=12345" "base_output_directory=gs://${GCS_BUCKET}")
+  "${args[@]}"
 }
 
 sync_metadata() {

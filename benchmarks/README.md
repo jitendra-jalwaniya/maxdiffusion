@@ -45,7 +45,8 @@ When adding a new suite, document:
 ## Current VBench flow
 
 For the current Wan VBench workflow, generate videos first and then evaluate
-them:
+them. This compressed evaluation generates and evaluates exactly one video per
+prompt:
 
 ```bash
 bash benchmarks/vbench/run_tpu_generation.sh --ssh GCS_BUCKET=<bucket> TPU_NAME=<tpu-vm> RUN_NAME=<run-name>

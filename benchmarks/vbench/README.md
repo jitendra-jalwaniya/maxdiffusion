@@ -25,7 +25,8 @@ video models can be added here later by adding model-specific generation
 defaults and documenting their output contract.
 
 The current benchmark data is a 110-prompt downsampled subset of the full VBench
-prompt set:
+prompt set. This is a compressed workflow: it generates and evaluates exactly
+one video per prompt.
 
 * `prompts_110.txt`: prompts passed to Wan generation
 * `VBench_full_info_sub110.json`: VBench metadata for the same prompts and
@@ -85,8 +86,6 @@ Common options:
 
 * `PROMPT_FILE`: prompt file path. Defaults to
   `./benchmarks/vbench/prompts_110.txt`.
-* `SEED`: single seed used when `SEEDS` is not set. Defaults to `12345`.
-* `SEEDS`: space-separated seeds for multiple samples.
 * `CONFIG_FILE`: Wan config. Defaults to `src/maxdiffusion/configs/base_wan_27b.yml`.
 * `EXTERNAL_DISK`: mounted TPU disk root for large local files. Defaults to
   `/mnt/disks/external_disk`.
@@ -95,7 +94,8 @@ Common options:
 
 The generation script keeps `GCS_VIDEO_DIR` fixed to `${RUN_NAME}/videos`,
 because MaxDiffusion writes generated MP4s using
-`base_output_directory=gs://${GCS_BUCKET}` and `run_name=${RUN_NAME}`.
+`base_output_directory=gs://${GCS_BUCKET}` and `run_name=${RUN_NAME}`. It uses
+the fixed seed `12345`.
 
 ## Run VBench Evaluation
 
@@ -110,6 +110,9 @@ Or run directly on a GPU host:
 ```bash
 bash benchmarks/vbench/run_gpu_eval.sh GCS_BUCKET=<bucket> RUN_NAME=<run-name>
 ```
+
+This is a compressed one-sample-per-prompt workflow. Evaluation rejects a
+missing or duplicate video for any prompt.
 
 Common options:
 
