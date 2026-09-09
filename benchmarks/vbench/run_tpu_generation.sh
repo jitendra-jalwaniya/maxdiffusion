@@ -28,6 +28,9 @@ GCS_BUCKET="${GCS_BUCKET:-}"
 GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-}"
 SEED="${SEED:-}"
 SEEDS="${SEEDS:-}"
+TPU_NAME="${TPU_NAME:-}"
+TPU_ZONE="${TPU_ZONE:-}"
+TPU_PROJECT="${TPU_PROJECT:-}"
 SSH_MODE=false
 EXPLICIT_ARGS=()
 
@@ -81,12 +84,12 @@ Common options:
 
 SSH options:
   --ssh              Copy this script to a TPU VM and run it there.
-  TPU_NAME           TPU VM name (default: jalwaniya-v6e-8)
-  TPU_ZONE           TPU VM zone (default: southamerica-west1-a)
-  TPU_PROJECT        TPU VM project (default: tpu-prod-env-one-vm)
+  TPU_NAME           TPU VM name (required when using --ssh).
+  TPU_ZONE           TPU VM zone.
+  TPU_PROJECT        TPU VM project.
   REMOTE_DIR         MaxDiffusion repo path on the TPU VM (default: \$HOME/maxdiffusion)
-  GIT_REPO           Repo to clone in SSH mode.
-  GIT_BRANCH         Branch to sync in SSH mode (default: codex)
+  GIT_REPO           Repo to clone in SSH mode (default: https://github.com/AI-Hypercomputer/maxdiffusion.git).
+  GIT_BRANCH         Branch to sync in SSH mode (default: main)
 EOF
 }
 
@@ -166,11 +169,15 @@ normalize_config() {
   set_default FLASH_BLOCK_SIZES "${DEFAULT_FLASH_BLOCK_SIZES}"
   set_default SEED "12345"
   set_default SEEDS "${SEED}"
-  set_default TPU_NAME "jalwaniya-v6e-8"
-  set_default TPU_ZONE "southamerica-west1-a"
-  set_default TPU_PROJECT "tpu-prod-env-one-vm"
-  set_default GIT_REPO "https://github.com/jitendra-jalwaniya/maxdiffusion.git"
-  set_default GIT_BRANCH "codex"
+  set_default TPU_NAME ""
+  set_default TPU_ZONE ""
+  set_default TPU_PROJECT ""
+  set_default GIT_REPO "https://github.com/AI-Hypercomputer/maxdiffusion.git"
+  set_default GIT_BRANCH "main"
+
+  if [[ "${SSH_MODE}" == "true" ]]; then
+    [[ -n "${TPU_NAME:-}" ]] || die "TPU_NAME is required when using --ssh."
+  fi
   set_default EXTERNAL_DISK "/mnt/disks/external_disk"
   EXTERNAL_DISK="${EXTERNAL_DISK%/}"
   for var in HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
@@ -255,7 +262,8 @@ emit_remote_args() {
 
 run_over_ssh() {
   local source_script remote_script remote_dir_label remote_dir_assignment remote_command
-  local gcloud_args=("--zone=${TPU_ZONE}")
+  local gcloud_args=()
+  [[ -n "${TPU_ZONE}" ]] && gcloud_args+=("--zone=${TPU_ZONE}")
   [[ -n "${TPU_PROJECT}" ]] && gcloud_args+=("--project=${TPU_PROJECT}")
 
   source_script="$(absolute_file "${BASH_SOURCE[0]}")"
@@ -270,8 +278,8 @@ run_over_ssh() {
   echo "=========================================================================="
   echo "Executing VBench generation remotely"
   echo "  TPU Name:    ${TPU_NAME}"
-  echo "  TPU Zone:    ${TPU_ZONE}"
-  echo "  TPU Project: ${TPU_PROJECT}"
+  echo "  TPU Zone:    ${TPU_ZONE:-<default>}"
+  echo "  TPU Project: ${TPU_PROJECT:-<default>}"
   echo "  Remote Dir:  ${remote_dir_label}"
   echo "  GCS Bucket:  gs://${GCS_BUCKET}"
   echo "  Video Target: gs://${GCS_BUCKET}/${GCS_VIDEO_DIR}"

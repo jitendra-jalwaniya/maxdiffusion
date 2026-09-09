@@ -30,11 +30,12 @@ GCS_VIDEO_DIR="${GCS_VIDEO_DIR:-}"
 GCS_RESULTS_DIR="${GCS_RESULTS_DIR:-}"
 UPLOAD_RESULTS="${UPLOAD_RESULTS:-true}"
 WORK_DIR_FROM_ARG=""
+local_results_parent=""
 
 VBENCH_REPO="${VBENCH_REPO:-https://github.com/Vchitect/VBench.git}"
 VBENCH_BRANCH="${VBENCH_BRANCH:-master}"
-MAXDIFFUSION_REPO="${MAXDIFFUSION_REPO:-https://github.com/jitendra-jalwaniya/maxdiffusion.git}"
-MAXDIFFUSION_BRANCH="${MAXDIFFUSION_BRANCH:-codex}"
+MAXDIFFUSION_REPO="${MAXDIFFUSION_REPO:-https://github.com/AI-Hypercomputer/maxdiffusion.git}"
+MAXDIFFUSION_BRANCH="${MAXDIFFUSION_BRANCH:-main}"
 BENCHMARK_JSON="${BENCHMARK_JSON:-VBench_full_info_sub110.json}"
 BENCHMARK_JSON_URL="${BENCHMARK_JSON_URL:-}"
 BENCHMARK_JSON_PATH="${BENCHMARK_JSON_PATH:-}"
@@ -147,7 +148,7 @@ normalize_config() {
   GCS_RESULTS_DIR="${GCS_RESULTS_DIR:-${RUN_NAME}/vbench_results}"
   [[ "${UPLOAD_RESULTS}" == "true" || "${UPLOAD_RESULTS}" == "false" ]] || die "UPLOAD_RESULTS must be true or false."
   WORK_DIR="${WORK_DIR_FROM_ARG:-${WORK_DIR:-$HOME/vbench_evaluation}}"
-  BENCHMARK_JSON_URL="${BENCHMARK_JSON_URL:-https://raw.githubusercontent.com/jitendra-jalwaniya/maxdiffusion/${MAXDIFFUSION_BRANCH}/benchmarks/vbench/${BENCHMARK_JSON}}"
+  BENCHMARK_JSON_URL="${BENCHMARK_JSON_URL:-https://raw.githubusercontent.com/AI-Hypercomputer/maxdiffusion/${MAXDIFFUSION_BRANCH}/benchmarks/vbench/${BENCHMARK_JSON}}"
 
   if [[ -n "${BENCHMARK_JSON_PATH}" ]]; then
     BENCHMARK_JSON_PATH="$(absolute_file "${BENCHMARK_JSON_PATH}")"
@@ -252,14 +253,16 @@ run_over_ssh() {
   "${ssh_cmd[@]}"
 
   if [[ "${UPLOAD_RESULTS}" == "true" ]]; then
-    local remote_results_dir local_results_parent previous_results_dir
+    local remote_results_dir previous_results_dir
     if [[ -n "${WORK_DIR_FROM_ARG}" ]]; then
       remote_results_dir="${WORK_DIR_FROM_ARG%/}/evaluation_results"
+      remote_results_dir="${remote_results_dir#~/}"
     else
-      remote_results_dir="~/vbench_evaluation/evaluation_results"
+      remote_results_dir="vbench_evaluation/evaluation_results"
     fi
 
     local_results_parent="$(mktemp -d "${TMPDIR:-/tmp}/vbench_results.XXXXXX")"
+    trap 'rm -rf "${local_results_parent}"' EXIT
     step "Copying evaluation results from ${GPU_NAME}:${remote_results_dir}..."
     local scp_results_cmd=("gcloud" "compute" "scp" "--recurse" "${GPU_NAME}:${remote_results_dir}" "${local_results_parent}/" "${gcloud_args[@]}")
     "${scp_results_cmd[@]}"
@@ -268,6 +271,8 @@ run_over_ssh() {
     RESULTS_DIR="${local_results_parent}/evaluation_results"
     upload_results
     RESULTS_DIR="${previous_results_dir}"
+    rm -rf "${local_results_parent}"
+    trap - EXIT
   fi
 }
 
