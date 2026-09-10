@@ -316,7 +316,15 @@ configure_cache_dirs() {
 
   root_device="$(df -P / | awk 'NR == 2 {print $1}')"
   external_device="$(df -P "${EXTERNAL_DISK}" | awk 'NR == 2 {print $1}')"
-  [[ "${external_device}" != "${root_device}" ]] || die "${EXTERNAL_DISK} is on ${external_device}, the same filesystem as /. Refusing to put Hugging Face caches on the boot disk."
+  if [[ "${external_device}" == "${root_device}" ]]; then
+    local free_gb
+    free_gb=$(df -BG / | awk 'NR == 2 {gsub("G",""); print $4}')
+    if (( free_gb < 100 )); then
+      die "${EXTERNAL_DISK} is on root filesystem with only ${free_gb}GB free. Need at least 100GB."
+    else
+      echo "WARNING: HF cache is on root filesystem (${free_gb}GB free). Consider mounting a dedicated disk for large runs."
+    fi
+  fi
 
   for cache_var in HF_CACHE_ROOT HF_HOME HF_HUB_CACHE HF_XET_CACHE HF_ASSETS_CACHE HF_DATASETS_CACHE HF_MODULES_CACHE TRANSFORMERS_CACHE TMPDIR; do
     case "${!cache_var%/}" in
